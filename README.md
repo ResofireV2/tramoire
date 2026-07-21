@@ -19,11 +19,12 @@ round-trip at the same time, which is why it comes first.
 Prerequisites: Rust (stable), Node 20+, and native build tools.
 
 <details>
-<summary>CachyOS / Arch</summary>
+<summary>Ubuntu / Debian (incl. Zorin OS)</summary>
 
 ```bash
-sudo pacman -S --needed webkit2gtk-4.1 base-devel curl wget file openssl \
-  appmenu-gtk-module libappindicator-gtk3 librsvg
+sudo apt install libwebkit2gtk-4.1-dev build-essential curl wget file \
+  libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev \
+  pkg-config git unzip
 ```
 </details>
 
