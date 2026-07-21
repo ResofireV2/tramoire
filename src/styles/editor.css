@@ -1,0 +1,70 @@
+/*
+ * The manuscript column. Everything here reads --ed-* and nothing reads
+ * --chrome-*: the editor is its own theme scope, and anything that floats over
+ * the prose later (bubble menu, entity card) belongs in this file, not app.css.
+ */
+
+.editor-wrap {
+  flex: 1;
+  min-width: 0;
+  background: var(--ed-bg);
+  overflow-y: auto;
+  padding: 52px 40px 90px;
+  /* The detail that gives mixed-mode apps away: without this the caret and the
+     native scrollbar follow the dark chrome onto light paper. */
+  color-scheme: var(--ed-scheme);
+}
+
+.editor { max-width: var(--measure); margin: 0 auto; }
+
+.scene-title {
+  font-family: var(--serif);
+  font-size: 34px;
+  font-weight: 400;
+  letter-spacing: -0.01em;
+  color: var(--ed-head);
+  margin: 0 0 6px;
+}
+
+.scene-sub {
+  font-size: 14px;
+  color: var(--ed-muted);
+  margin-bottom: 38px;
+}
+
+.empty {
+  color: var(--ed-muted);
+  font-size: 16px;
+  text-align: center;
+  margin-top: 80px;
+  line-height: 1.7;
+}
+
+/* Tiptap renders into .prose via editorProps.attributes. */
+.prose {
+  font-family: var(--serif);
+  font-size: 20px;
+  line-height: 1.9;
+  color: var(--ed-text);
+  outline: none;
+}
+.prose p { margin: 0 0 1.15em; text-indent: 1.4em; }
+.prose p:first-of-type { text-indent: 0; }
+.prose ::selection { background: var(--ed-sel); }
+
+.prose p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  color: var(--ed-muted);
+  float: left;
+  height: 0;
+  pointer-events: none;
+}
+
+@media (max-width: 1280px) {
+  .editor-wrap { padding: 44px 32px 80px; }
+}
+@media (max-width: 1000px) {
+  .editor-wrap { padding: 36px 24px 64px; }
+  .prose { font-size: 19px; }
+  .scene-title { font-size: 29px; }
+}

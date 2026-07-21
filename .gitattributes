@@ -1,0 +1,8 @@
+# Both development machines are in play, and scene files are the deliverable.
+# Normalise to LF in the repository and check out LF everywhere, so a scene
+# edited on Windows and one edited on Linux produce the same diff.
+* text=auto eol=lf
+
+*.png binary
+*.ico binary
+*.icns binary

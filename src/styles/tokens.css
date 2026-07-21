@@ -1,0 +1,74 @@
+/*
+ * The only file in the repo allowed to contain a hex value.
+ *   grep -rn "#[0-9a-fA-F]\{3,8\}" src --include=*.css --include=*.tsx | grep -v tokens.css
+ * should return nothing. If it returns something, that is the bug.
+ *
+ * Two namespaces, not one set with overrides. --chrome-* lives on :root and is
+ * switched by data-chrome. --ed-* is switched by data-editor and is only ever
+ * read inside the editor container.
+ */
+
+:root {
+  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  --binder-w: 300px;
+  --measure: 33em;
+}
+
+/* ---------------------------------------------------------------- chrome */
+
+[data-chrome="dark"] {
+  color-scheme: dark;
+  --chrome-bg: #17171b;
+  --chrome-panel: #1b1b20;
+  --chrome-raised: #24242b;
+  --chrome-border: #26262c;
+  --chrome-text: #ebebf2;
+  --chrome-text-2: #9a9aa8;
+  --chrome-text-3: #63636e;
+  --chrome-accent: #b4aef0;
+  --chrome-accent-bg: #2b2842;
+}
+
+[data-chrome="light"] {
+  color-scheme: light;
+  --chrome-bg: #eceae5;
+  --chrome-panel: #f5f4f1;
+  --chrome-raised: #ffffff;
+  --chrome-border: #dbd8d1;
+  --chrome-text: #26262a;
+  --chrome-text-2: #5f5f68;
+  --chrome-text-3: #8d8d95;
+  --chrome-accent: #574dae;
+  --chrome-accent-bg: #e7e5f7;
+}
+
+/* ---------------------------------------------------------------- editor */
+
+[data-editor="paper"] {
+  --ed-scheme: light;
+  --ed-bg: #f4f1ea;
+  --ed-text: #3d382e;
+  --ed-head: #2b271f;
+  --ed-muted: #948d7c;
+  --ed-rule: #ddd6c7;
+  --ed-sel: #e3dcc8;
+  --ed-char: #8a6b3f;
+  --ed-place: #4a7360;
+  --ed-item: #8a5a52;
+}
+
+[data-editor="ink"] {
+  --ed-scheme: dark;
+  --ed-bg: #1c1c21;
+  --ed-text: #c4c4cf;
+  --ed-head: #eeeef4;
+  --ed-muted: #75757f;
+  --ed-rule: #2e2e36;
+  --ed-sel: #33333d;
+  --ed-char: #c8a86a;
+  --ed-place: #6fb094;
+  --ed-item: #cd8b80;
+}

@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Tramoire</title>
+    <script>
+      // Read the persisted theme before first paint. Without this the window
+      // flashes light chrome on every launch in dark mode.
+      (function () {
+        var chrome = "dark";
+        var editor = "paper";
+        try {
+          var saved = JSON.parse(localStorage.getItem("tramoire.theme") || "{}");
+          if (saved.chrome === "light") chrome = "light";
+          if (saved.editor === "ink") editor = "ink";
+        } catch (e) {}
+        document.documentElement.dataset.chrome = chrome;
+        document.documentElement.dataset.editor = editor;
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
