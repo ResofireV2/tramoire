@@ -30,6 +30,16 @@ pub struct Act {
     pub scenes: Vec<SceneMeta>,
 }
 
+/// What `create_scene` gives back: the manifest as it now stands, plus the
+/// scene that was just made, so the frontend can open it without having to
+/// work out which entry is new.
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct Created {
+    pub project: Project,
+    pub scene: SceneMeta,
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct Project {

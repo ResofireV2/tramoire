@@ -30,6 +30,7 @@
   --chrome-text-3: #63636e;
   --chrome-accent: #b4aef0;
   --chrome-accent-bg: #2b2842;
+  --chrome-scrim: rgb(9 9 12 / 0.62);
 }
 
 [data-chrome="light"] {
@@ -43,6 +44,7 @@
   --chrome-text-3: #8d8d95;
   --chrome-accent: #574dae;
   --chrome-accent-bg: #e7e5f7;
+  --chrome-scrim: rgb(60 56 48 / 0.34);
 }
 
 /* ---------------------------------------------------------------- editor */

@@ -2,11 +2,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useEditor } from "@tiptap/react";
 
 import { Binder } from "./components/Binder";
+import { useConfirm } from "./components/Confirm";
 import { SceneEditor } from "./components/SceneEditor";
 import { StatusBar } from "./components/StatusBar";
 import { TopBar } from "./components/TopBar";
 
 import { createSaver, type SaveState, type SaveTarget } from "./lib/autosave";
+import type { Position } from "./lib/binder";
 import { editorProps, editorText, extensions } from "./lib/editor";
 import { countWords, docToMd, mdToDoc } from "./lib/markdown";
 import * as storage from "./lib/storage";
@@ -22,6 +24,10 @@ export default function App() {
   const [words, setWords] = useState(0);
 
   const [theme, setTheme] = useState<Theme>(loadTheme);
+
+  // `ask` is stable; the dialog node is not, so depend on the function alone
+  // rather than the pair, or every render invalidates the delete handler.
+  const { ask, dialog: confirmDialog } = useConfirm();
 
   useEffect(() => {
     applyTheme(theme);
@@ -113,6 +119,106 @@ export default function App() {
     [editor, projectPath, saver, scene?.id]
   );
 
+  const renameScene = useCallback(
+    async (meta: storage.SceneMeta, title: string) => {
+      if (!projectPath) return;
+
+      try {
+        const updated = await storage.renameScene(projectPath, meta.id, title);
+
+        setProject(updated);
+        // Take the scene back out of the manifest that was returned rather than
+        // patching the one in hand, so state and disk cannot drift apart.
+        setScene((current) =>
+          current?.id === meta.id
+            ? storage.allScenes(updated).find((s) => s.id === meta.id) ?? current
+            : current
+        );
+      } catch (error) {
+        setSaveState("error");
+        setSaveError(String(error));
+      }
+    },
+    [projectPath]
+  );
+
+  const moveScene = useCallback(
+    async (meta: storage.SceneMeta, to: Position) => {
+      if (!projectPath) return;
+
+      try {
+        setProject(await storage.moveScene(projectPath, meta.id, to.actId, to.index));
+      } catch (error) {
+        setSaveState("error");
+        setSaveError(String(error));
+      }
+    },
+    [projectPath]
+  );
+
+  const createScene = useCallback(
+    async (act: storage.Act) => {
+      if (!projectPath) return null;
+
+      try {
+        const made = await storage.createScene(
+          projectPath,
+          act.id,
+          "Untitled scene",
+          act.scenes.length
+        );
+
+        setProject(made.project);
+        await loadScene(made.scene);
+        return made.scene;
+      } catch (error) {
+        setSaveState("error");
+        setSaveError(String(error));
+        return null;
+      }
+    },
+    [loadScene, projectPath]
+  );
+
+  const deleteScene = useCallback(
+    async (meta: storage.SceneMeta) => {
+      if (!projectPath) return;
+
+      const go = await ask({
+        title: `Move “${meta.title}” to trash?`,
+        body:
+          "The markdown file moves to the trash folder inside the project. " +
+          "It stays on disk, and moving it back restores the scene.",
+        confirmLabel: "Move to trash",
+        cancelLabel: "Keep",
+      });
+      if (!go) return;
+
+      // A queued write belonging to this scene would recreate the file that is
+      // about to move to trash, leaving an orphan nothing points at.
+      if (targetRef.current?.file === meta.file) {
+        saver.cancel();
+        targetRef.current = null;
+      }
+
+      try {
+        setProject(await storage.deleteScene(projectPath, meta.id));
+
+        if (scene?.id === meta.id) {
+          setScene(null);
+          editor?.commands.clearContent();
+          setWords(0);
+          setSaveState("idle");
+          setSaveError(null);
+        }
+      } catch (error) {
+        setSaveState("error");
+        setSaveError(String(error));
+      }
+    },
+    [ask, editor, projectPath, saver, scene?.id]
+  );
+
   /* ---------------------------------------------------------------- flush */
 
   useEffect(() => {
@@ -145,6 +251,10 @@ export default function App() {
           project={project}
           currentSceneId={scene?.id ?? null}
           onSelect={(meta) => void loadScene(meta)}
+          onRename={(meta, title) => void renameScene(meta, title)}
+          onMove={(meta, to) => void moveScene(meta, to)}
+          onCreate={createScene}
+          onDelete={(meta) => void deleteScene(meta)}
         />
         <SceneEditor editor={editor} scene={scene} hasProject={project !== null} />
       </div>
@@ -155,6 +265,8 @@ export default function App() {
         saveState={saveState}
         saveError={saveError}
       />
+
+      {confirmDialog}
     </div>
   );
 }

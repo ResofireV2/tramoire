@@ -59,7 +59,19 @@ The sample project is committed to this repository on purpose: editing it makes
    lines, and the italic is still `*angry about his neck*`.
 5. Select a word, press Ctrl+B, and diff again. It is now `**word**`.
 6. Click the other scene and back. The edit persisted.
-7. `git checkout sample/` to reset.
+7. Double-click a scene in the binder (or press F2 on it), retitle it, press
+   Enter. `git diff sample/` shows one changed title in `project.json` and
+   nothing else — the scene file and its `id` and `file` are untouched.
+8. With a scene selected, hold Alt+↓ until it crosses into act two. It keeps
+   focus the whole way, so one held key walks it through the manuscript.
+   `git diff sample/` shows the scene object moved between acts and nothing
+   else — no scene file was touched, because ordering is not stored in one.
+9. Press **+** on an act header. A scene appears with its title selected and an
+   empty file behind it in `scenes/`. Press the **×** on a row (or Delete on a
+   selected scene), confirm, and the entry goes while the markdown moves to
+   `trash/`.
+10. `git checkout sample/ && git clean -fd sample/` to reset — the checkout
+    restores what was tracked, the clean removes what was created or trashed.
 
 ## Scripts
 
@@ -83,6 +95,7 @@ src/
     autosave.ts     debounced writes with an explicit flush
     editor.ts       schema, smart typography, paste handling
     theme.ts        the two theme axes
+    binder.ts       where a scene lands when it moves
   components/       presentational only, no filesystem knowledge
   styles/
     tokens.css      the only file allowed to contain a hex value
@@ -92,7 +105,8 @@ src/
 src-tauri/src/
   commands.rs       every command the frontend can call
   model.rs          the shape of project.json — mirrors storage.ts
-  paths.rs          path containment and atomic writes
+  naming.rs         titles into filenames
+  paths.rs          path containment, atomic writes, checkpoints
 
 sample/             a project to open, so the app is runnable on clone
 ```
@@ -104,7 +118,14 @@ MyNovel.tramoire/
   project.json      manifest: ordering tree, metadata
   scenes/
     six-hours-out.md
+  trash/            deleted scenes, still readable
+    an-old-scene.md
 ```
+
+Deleting a scene takes its entry out of the manifest and moves the file to
+`trash/`. Nothing in the app empties that folder — recovery is moving the file
+back and re-adding the entry, and disposal is deleting it yourself. A writing
+application should not be the thing that destroys prose.
 
 Scene files are pure markdown with no frontmatter — all metadata lives in
 `project.json`, which keeps the Rust side dependency-free. Adding frontmatter
@@ -122,6 +143,19 @@ These are load-bearing. Breaking one is cheap now and expensive in a year.
 **No component calls `invoke`.** Everything filesystem-shaped goes through
 `src/lib/storage.ts`. Keep that and a browser or cloud backend later means
 rewriting one file instead of auditing the whole UI.
+
+**The manifest is written by narrow commands.** Nothing hands a whole `Project`
+back to Rust to be saved. Each mutation — `rename_scene` now, `move_scene` and
+`create_scene` next — re-reads `project.json`, changes one thing, and writes it
+back, so the file on disk stays the source of truth and a window that has been
+open since this morning cannot overwrite structure it never saw. That case is
+not hypothetical: this design tells people to keep the folder in Dropbox.
+
+**Every manifest write takes a checkpoint.** `project.json` is the only thing in
+the folder that cannot be reconstructed from the scene files — it holds every
+title, ordering and act membership. Atomic writes rule out a half-written
+manifest but not a well-formed wrong one, so the copy from immediately before
+the write sits next to it as `.project.json.bak`. Recovery is renaming it back.
 
 **The editor's schema is semantic only.** Italic, bold, and eventually scene
 breaks and blockquote. No fonts, sizes, colours or alignment — those are
@@ -154,8 +188,8 @@ new one, never half of one.
 
 Each is additive. None require changing what is already here.
 
-1. **Reordering** — drag scenes in the binder, write the new order back to
-   `project.json`. Needs one more command and a checkpoint before the write.
+1. **Acts** — creating, renaming, reordering and deleting them. Scenes have all
+   four; the acts holding them have none, which is the obvious next gap.
 2. **Entities** — `entities/*.md` with frontmatter, one table with a `type`
    column, one link table. Characters, locations and items are the same noun.
 3. **Decorations** — the ProseMirror plugin that underlines entity names.
@@ -176,7 +210,11 @@ Each is additive. None require changing what is already here.
 - There is no prompt on quit if a save is still pending. Writes flush on window
   blur, on visibility change and before switching scenes, which covers
   everything short of a hard kill.
-- No reordering, no entities, no snapshots, no images, no export. On purpose.
+- Acts cannot be created, renamed, reordered or deleted from inside the app.
+  Scenes can do all four; their acts are still hand-edited in `project.json`.
+- Nothing empties `trash/`. That is deliberate, but it does mean a project
+  folder only grows.
+- No entities, no snapshots, no images, no export. On purpose.
 
 ## Distribution
 

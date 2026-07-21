@@ -98,13 +98,50 @@ button {
 }
 .act:first-child { margin-top: 0; }
 
+.act-add {
+  margin-left: auto;
+  padding: 1px 7px 3px;
+  border-radius: 7px;
+  font-size: 17px;
+  line-height: 1;
+  color: var(--chrome-text-3);
+}
+.act-add:hover { background: var(--chrome-panel); color: var(--chrome-text); }
+
+.scene-row { position: relative; }
+
 .scene {
   display: block;
   width: 100%;
   text-align: left;
-  padding: 13px 16px 13px 30px;
+  padding: 13px 34px 13px 30px;
   border-radius: 12px;
   margin-bottom: 3px;
+}
+.scene[data-dragging="true"] { opacity: 0.4; }
+
+/* Hidden until the row is under the pointer — one per scene is a lot of
+   furniture for something the Delete key also does. */
+.scene-delete {
+  position: absolute;
+  top: 10px;
+  right: 8px;
+  padding: 3px 7px 5px;
+  border-radius: 7px;
+  font-size: 15px;
+  line-height: 1;
+  color: var(--chrome-text-3);
+  opacity: 0;
+}
+.scene-row:hover .scene-delete,
+.scene-delete:focus { opacity: 1; }
+.scene-delete:hover { background: var(--chrome-panel); color: var(--chrome-text); }
+
+.drop-line {
+  height: 2px;
+  margin: 1px 8px;
+  border-radius: 2px;
+  background: var(--chrome-accent);
 }
 .scene .t { display: block; font-size: 16px; color: var(--chrome-text-2); }
 .scene .m { display: block; font-size: 13.5px; color: var(--chrome-text-3); margin-top: 3px; }
@@ -112,11 +149,78 @@ button {
 .scene[aria-current="true"] { background: var(--chrome-raised); }
 .scene[aria-current="true"] .t { color: var(--chrome-text); }
 
+/* Sits where a .scene sits, so the row does not jump when editing starts. */
+.scene-rename {
+  display: block;
+  width: 100%;
+  padding: 13px 16px 13px 29px;
+  margin-bottom: 3px;
+  border: 1px solid var(--chrome-accent);
+  border-radius: 12px;
+  background: var(--chrome-raised);
+  color: var(--chrome-text);
+  font-family: var(--sans);
+  font-size: 16px;
+}
+.scene-rename:focus { outline: none; }
+
 .binder-empty {
   font-size: 14px;
   color: var(--chrome-text-3);
   line-height: 1.6;
   padding: 12px;
+}
+
+/* ------------------------------------------------------------- confirm */
+
+.confirm {
+  margin: auto;
+  padding: 0;
+  border: none;
+  background: none;
+  max-width: min(430px, calc(100vw - 40px));
+}
+.confirm::backdrop { background: var(--chrome-scrim); }
+
+.confirm-panel {
+  padding: 26px 26px 20px;
+  border: 1px solid var(--chrome-border);
+  border-radius: 16px;
+  background: var(--chrome-raised);
+  color: var(--chrome-text);
+  font-family: var(--sans);
+}
+.confirm-panel h2 {
+  font-size: 17px;
+  font-weight: 600;
+  margin-bottom: 10px;
+}
+.confirm-panel p {
+  font-size: 14.5px;
+  line-height: 1.6;
+  color: var(--chrome-text-2);
+}
+
+.confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 24px;
+}
+
+.btn {
+  padding: 9px 16px;
+  border-radius: 10px;
+  border: 1px solid var(--chrome-border);
+  font-size: 14px;
+  color: var(--chrome-text-2);
+  background: var(--chrome-panel);
+}
+.btn:hover { color: var(--chrome-text); }
+.btn-danger {
+  border-color: transparent;
+  background: var(--chrome-accent-bg);
+  color: var(--chrome-accent);
 }
 
 /* -------------------------------------------------------------- status */

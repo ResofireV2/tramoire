@@ -1,5 +1,6 @@
 mod commands;
 mod model;
+mod naming;
 mod paths;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -10,6 +11,10 @@ pub fn run() {
             commands::open_project,
             commands::read_scene,
             commands::write_scene,
+            commands::rename_scene,
+            commands::move_scene,
+            commands::create_scene,
+            commands::delete_scene,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

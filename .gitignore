@@ -9,6 +9,10 @@ dist-ssr/
 src-tauri/target/
 src-tauri/gen/schemas/
 
+# Manifest checkpoints — the copy taken before a project.json write. Recovery
+# is by renaming one back by hand; they are never part of a commit.
+.project.json.bak
+
 # Editors and OS
 .vscode/
 .idea/
