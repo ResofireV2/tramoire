@@ -43,8 +43,29 @@ export async function pickProjectFolder(): Promise<string | null> {
   return typeof chosen === "string" ? chosen : null;
 }
 
+/** Ask where a new project should be put. Returns null if they cancelled. */
+export async function pickParentFolder(): Promise<string | null> {
+  const chosen = await open({
+    directory: true,
+    multiple: false,
+    title: "Where should the project go?",
+  });
+  return typeof chosen === "string" ? chosen : null;
+}
+
 export function openProject(path: string): Promise<Project> {
   return invoke("open_project", { path });
+}
+
+/**
+ * Make a project folder under `parentPath` and resolve to its path.
+ *
+ * Deliberately does not return the project: the caller opens the result like
+ * any other folder, so there is one definition of what opening means and
+ * creation cannot drift away from it.
+ */
+export function createProject(parentPath: string, title: string): Promise<string> {
+  return invoke("create_project", { parentPath, title });
 }
 
 export function readScene(projectPath: string, file: string): Promise<string> {
@@ -113,6 +134,36 @@ export function createScene(
  */
 export function deleteScene(projectPath: string, sceneId: string): Promise<Project> {
   return invoke("delete_scene", { projectPath, sceneId });
+}
+
+/* ------------------------------------------------------------------ acts */
+
+export function createAct(projectPath: string, title: string, toIndex: number): Promise<Project> {
+  return invoke("create_act", { projectPath, title, toIndex });
+}
+
+export function renameAct(projectPath: string, actId: string, title: string): Promise<Project> {
+  return invoke("rename_act", { projectPath, actId, title });
+}
+
+export function moveAct(projectPath: string, actId: string, toIndex: number): Promise<Project> {
+  return invoke("move_act", { projectPath, actId, toIndex });
+}
+
+/** What becomes of the scenes an act still holds. Mirrors `Scenes` in Rust. */
+export type ActScenes = "move" | "trash";
+
+/**
+ * Delete an act, moving its scenes into the neighbouring act or sending their
+ * files to `trash/`. The last act cannot be deleted — a project with no acts
+ * has nowhere to put a scene.
+ */
+export function deleteAct(
+  projectPath: string,
+  actId: string,
+  scenes: ActScenes
+): Promise<Project> {
+  return invoke("delete_act", { projectPath, actId, scenes });
 }
 
 /** Flatten the act tree for anything that needs scenes in reading order. */

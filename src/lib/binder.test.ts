@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { dropPosition, nextPosition } from "./binder";
+import { dropPosition, nextActPosition, nextPosition } from "./binder";
 import type { Project } from "./storage";
 
 const scene = (id: string) => ({ id, title: id, file: `scenes/${id}.md`, status: "" });
@@ -42,6 +42,23 @@ describe("across acts", () => {
       acts: [project.acts[0], { id: "act-2", title: "Act two", scenes: [] }],
     };
     expect(nextPosition(empty, "two", "down")).toEqual({ actId: "act-2", index: 0 });
+  });
+});
+
+describe("moving an act", () => {
+  it("steps one place in each direction", () => {
+    expect(nextActPosition(project, "act-1", "down")).toBe(1);
+    expect(nextActPosition(project, "act-2", "up")).toBe(0);
+  });
+
+  it("stops at the ends of the book", () => {
+    expect(nextActPosition(project, "act-1", "up")).toBeNull();
+    expect(nextActPosition(project, "act-2", "down")).toBeNull();
+  });
+
+  it("returns null for an act or project that is not there", () => {
+    expect(nextActPosition(project, "act-9", "up")).toBeNull();
+    expect(nextActPosition(null, "act-1", "up")).toBeNull();
   });
 });
 

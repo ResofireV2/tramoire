@@ -1,6 +1,12 @@
 import { Fragment, useEffect, useRef, useState } from "react";
 
-import { dropPosition, nextPosition, type Position, type Slot } from "../lib/binder";
+import {
+  dropPosition,
+  nextActPosition,
+  nextPosition,
+  type Position,
+  type Slot,
+} from "../lib/binder";
 import { allScenes, type Act, type Project, type SceneMeta } from "../lib/storage";
 
 type Props = {
@@ -11,7 +17,50 @@ type Props = {
   onMove: (scene: SceneMeta, to: Position) => void;
   onCreate: (act: Act) => Promise<SceneMeta | null>;
   onDelete: (scene: SceneMeta) => void;
+  onCreateAct: () => Promise<Act | null>;
+  onRenameAct: (act: Act, title: string) => void;
+  onMoveAct: (act: Act, toIndex: number) => void;
+  onDeleteAct: (act: Act) => void;
+  /** A scene the binder should open its rename field on, made elsewhere. */
+  startRenaming?: string | null;
+  onRenameStarted?: () => void;
 };
+
+type Named = { id: string; title: string };
+
+/**
+ * An inline rename field, of which the binder has two — one for scenes and one
+ * for acts. They behave identically, and the fiddly part is identical too:
+ * Escape has to stop the blur that follows it from committing, which needs a
+ * ref because state updates land too late.
+ */
+function useInlineRename<T extends Named>(commitTitle: (item: T, title: string) => void) {
+  const [editing, setEditing] = useState<string | null>(null);
+  const [draft, setDraft] = useState("");
+  const live = useRef<string | null>(null);
+
+  function start(item: T) {
+    live.current = item.id;
+    setEditing(item.id);
+    setDraft(item.title);
+  }
+
+  function commit(item: T) {
+    if (live.current !== item.id) return;
+    live.current = null;
+    setEditing(null);
+
+    const title = draft.trim();
+    if (title && title !== item.title) commitTitle(item, title);
+  }
+
+  function cancel() {
+    live.current = null;
+    setEditing(null);
+  }
+
+  return { editing, draft, setDraft, start, commit, cancel };
+}
 
 export function Binder({
   project,
@@ -21,19 +70,21 @@ export function Binder({
   onMove,
   onCreate,
   onDelete,
+  onCreateAct,
+  onRenameAct,
+  onMoveAct,
+  onDeleteAct,
+  startRenaming,
+  onRenameStarted,
 }: Props) {
-  const [renaming, setRenaming] = useState<string | null>(null);
-  const [draft, setDraft] = useState("");
   const [over, setOver] = useState<Slot | null>(null);
-
-  // Whether an edit is still live, in a ref rather than state: Escape has to
-  // stop the blur that follows it from committing, and state updates land too
-  // late for that.
-  const editing = useRef<string | null>(null);
 
   // Kept here rather than on the drag event because dataTransfer cannot be read
   // during dragover, only on drop, and the row has to look lifted before then.
   const [dragging, setDragging] = useState<string | null>(null);
+
+  const scenes = useInlineRename<SceneMeta>(onRename);
+  const acts = useInlineRename<Act>(onRenameAct);
 
   const buttons = useRef(new Map<string, HTMLButtonElement>());
   const refocus = useRef<string | null>(null);
@@ -49,27 +100,15 @@ export function Binder({
     buttons.current.get(id)?.focus();
   }, [project]);
 
-  /* ------------------------------------------------------------ renaming */
+  // A scene created by the project dialog rather than by the + button: the
+  // binder still owns the rename field, so it is asked to open one.
+  useEffect(() => {
+    if (!startRenaming) return;
 
-  function start(scene: SceneMeta) {
-    editing.current = scene.id;
-    setRenaming(scene.id);
-    setDraft(scene.title);
-  }
-
-  function commit(scene: SceneMeta) {
-    if (editing.current !== scene.id) return;
-    editing.current = null;
-    setRenaming(null);
-
-    const title = draft.trim();
-    if (title && title !== scene.title) onRename(scene, title);
-  }
-
-  function cancel() {
-    editing.current = null;
-    setRenaming(null);
-  }
+    const scene = allScenes(project).find((s) => s.id === startRenaming);
+    if (scene) scenes.start(scene);
+    onRenameStarted?.();
+  }, [startRenaming]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /* --------------------------------------------------------------- moving */
 
@@ -102,11 +141,18 @@ export function Binder({
     return { actId, index: index + (below ? 1 : 0) };
   }
 
+  /* -------------------------------------------------------------- making */
+
   async function create(act: Act) {
     const made = await onCreate(act);
     // A new scene is called "Untitled scene" until someone says otherwise, so
     // hand them the field rather than making them find it.
-    if (made) start(made);
+    if (made) scenes.start(made);
+  }
+
+  async function createAct() {
+    const made = await onCreateAct();
+    if (made) acts.start(made);
   }
 
   /* ----------------------------------------------------------------- view */
@@ -137,32 +183,70 @@ export function Binder({
             drop({ actId: act.id, index: act.scenes.length });
           }}
         >
-          <div className="act">
-            {act.title}
-            <button
-              className="act-add"
-              aria-label={`Add a scene to ${act.title}`}
-              onClick={() => void create(act)}
-            >
-              +
-            </button>
-          </div>
+          {acts.editing === act.id ? (
+            <input
+              className="act-rename"
+              aria-label="Act title"
+              value={acts.draft}
+              autoFocus
+              onChange={(event) => acts.setDraft(event.target.value)}
+              onBlur={() => acts.commit(act)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") acts.commit(act);
+                if (event.key === "Escape") acts.cancel();
+              }}
+            />
+          ) : (
+            <div className="act">
+              <button
+                className="act-title"
+                onDoubleClick={() => acts.start(act)}
+                onClick={(event) => event.currentTarget.focus()}
+                onKeyDown={(event) => {
+                  if (event.key === "F2") acts.start(act);
+
+                  if (event.altKey && (event.key === "ArrowUp" || event.key === "ArrowDown")) {
+                    event.preventDefault();
+                    const to = nextActPosition(project, act.id, event.key === "ArrowUp" ? "up" : "down");
+                    if (to !== null) onMoveAct(act, to);
+                  }
+                }}
+              >
+                {act.title}
+              </button>
+
+              <button
+                className="act-add"
+                aria-label={`Add a scene to ${act.title}`}
+                onClick={() => void create(act)}
+              >
+                +
+              </button>
+              <button
+                className="act-delete"
+                aria-label={`Delete ${act.title}`}
+                onClick={() => onDeleteAct(act)}
+              >
+                ×
+              </button>
+            </div>
+          )}
 
           {act.scenes.map((scene, index) => (
             <Fragment key={scene.id}>
               {over?.actId === act.id && over.index === index && <div className="drop-line" />}
 
-              {renaming === scene.id ? (
+              {scenes.editing === scene.id ? (
                 <input
                   className="scene-rename"
                   aria-label="Scene title"
-                  value={draft}
+                  value={scenes.draft}
                   autoFocus
-                  onChange={(event) => setDraft(event.target.value)}
-                  onBlur={() => commit(scene)}
+                  onChange={(event) => scenes.setDraft(event.target.value)}
+                  onBlur={() => scenes.commit(scene)}
                   onKeyDown={(event) => {
-                    if (event.key === "Enter") commit(scene);
-                    if (event.key === "Escape") cancel();
+                    if (event.key === "Enter") scenes.commit(scene);
+                    if (event.key === "Escape") scenes.cancel();
                   }}
                 />
               ) : (
@@ -193,7 +277,7 @@ export function Binder({
                     onDragStart={(event) => {
                       setDragging(scene.id);
                       event.dataTransfer.effectAllowed = "move";
-                      // Not read back — the ref carries it — but Firefox will
+                      // Not read back — state carries it — but Firefox will
                       // not start a drag without data on the transfer.
                       event.dataTransfer.setData("text/plain", scene.id);
                     }}
@@ -208,9 +292,9 @@ export function Binder({
                       event.currentTarget.focus();
                       onSelect(scene);
                     }}
-                    onDoubleClick={() => start(scene)}
+                    onDoubleClick={() => scenes.start(scene)}
                     onKeyDown={(event) => {
-                      if (event.key === "F2") start(scene);
+                      if (event.key === "F2") scenes.start(scene);
                       if (event.key === "Delete") onDelete(scene);
 
                       if (event.altKey && event.key === "ArrowUp") {
@@ -244,6 +328,10 @@ export function Binder({
           )}
         </div>
       ))}
+
+      <button className="act-new" onClick={() => void createAct()}>
+        + New act
+      </button>
     </nav>
   );
 }

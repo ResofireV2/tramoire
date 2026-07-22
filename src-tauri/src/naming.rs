@@ -33,9 +33,74 @@ pub fn slugify(title: &str) -> String {
     }
 }
 
+/// Windows refuses these whatever extension follows them.
+const RESERVED: [&str; 22] = [
+    "con", "prn", "aux", "nul", "com1", "com2", "com3", "com4", "com5", "com6", "com7", "com8",
+    "com9", "lpt1", "lpt2", "lpt3", "lpt4", "lpt5", "lpt6", "lpt7", "lpt8", "lpt9",
+];
+
+/// A project folder name, or None if nothing usable is left of the title.
+///
+/// Not a slug. A scene file is internal plumbing, but this folder is the thing
+/// someone sees in Finder or Explorer and typed the name of themselves, so
+/// spaces, capitals and accents survive. Only what the filesystems actually
+/// refuse comes out: the characters Windows reserves, control characters, and
+/// the leading dots and trailing dots and spaces that get silently stripped.
+pub fn folder_name(title: &str) -> Option<String> {
+    let cleaned: String = title
+        .chars()
+        .map(|ch| match ch {
+            '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*' => ' ',
+            ch if ch.is_control() => ' ',
+            ch => ch,
+        })
+        .collect();
+
+    // Collapse the runs the substitutions above just created.
+    let name = cleaned.split_whitespace().collect::<Vec<_>>().join(" ");
+    let name = name.trim_matches('.').trim();
+    let name: String = name.chars().take(80).collect();
+    let name = name.trim_end_matches(['.', ' ']).trim().to_string();
+
+    if name.is_empty() || RESERVED.contains(&name.to_ascii_lowercase().as_str()) {
+        return None;
+    }
+
+    Some(name)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_folder_keeps_what_a_person_typed() {
+        assert_eq!(folder_name("The county line").unwrap(), "The county line");
+        assert_eq!(folder_name("Café Nocturne").unwrap(), "Café Nocturne");
+    }
+
+    #[test]
+    fn a_folder_drops_what_a_filesystem_refuses() {
+        assert_eq!(folder_name("Act 1: the drive").unwrap(), "Act 1 the drive");
+        assert_eq!(folder_name("what/now?").unwrap(), "what now");
+        assert_eq!(folder_name("  spaced  out  ").unwrap(), "spaced out");
+    }
+
+    #[test]
+    fn a_folder_cannot_be_hidden_or_trailing_dotted() {
+        // Windows strips these silently, which would leave the folder on disk
+        // under a different name than the one that went into project.json.
+        assert_eq!(folder_name(".hidden").unwrap(), "hidden");
+        assert_eq!(folder_name("Chapter one...").unwrap(), "Chapter one");
+    }
+
+    #[test]
+    fn a_folder_refuses_reserved_and_empty_names() {
+        assert!(folder_name("   ").is_none());
+        assert!(folder_name("???").is_none());
+        assert!(folder_name("CON").is_none());
+        assert!(folder_name("nul").is_none());
+    }
 
     #[test]
     fn makes_a_filename_out_of_a_title() {

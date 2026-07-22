@@ -1,13 +1,28 @@
+import { Menu } from "./Menu";
+import type { Recent } from "../lib/recent";
 import type { Chrome, EditorTheme, Theme } from "../lib/theme";
 
 type Props = {
   projectTitle: string | null;
+  projectPath: string | null;
+  recent: Recent[];
   theme: Theme;
   onThemeChange: (theme: Theme) => void;
+  onNewProject: () => void;
   onOpenProject: () => void;
+  onOpenRecent: (entry: Recent) => void;
 };
 
-export function TopBar({ projectTitle, theme, onThemeChange, onOpenProject }: Props) {
+export function TopBar({
+  projectTitle,
+  projectPath,
+  recent,
+  theme,
+  onThemeChange,
+  onNewProject,
+  onOpenProject,
+  onOpenRecent,
+}: Props) {
   return (
     <header className="topbar">
       <div className="brand">
@@ -38,9 +53,15 @@ export function TopBar({ projectTitle, theme, onThemeChange, onOpenProject }: Pr
           onChange={(editor) => onThemeChange({ ...theme, editor })}
         />
 
-        <button className="btn" style={{ marginLeft: 8 }} onClick={onOpenProject}>
-          Open project
-        </button>
+        <div style={{ marginLeft: 8 }}>
+          <Menu
+            recent={recent}
+            currentPath={projectPath}
+            onNewProject={onNewProject}
+            onOpenProject={onOpenProject}
+            onOpenRecent={onOpenRecent}
+          />
+        </div>
       </div>
     </header>
   );

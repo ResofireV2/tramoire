@@ -1,9 +1,17 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 
+export type Choice = {
+  /** What `ask` resolves to when this one is picked. */
+  key: string;
+  label: string;
+  /** Styled as the destructive answer. */
+  danger?: boolean;
+};
+
 export type Request = {
   title: string;
   body: string;
-  confirmLabel: string;
+  choices: Choice[];
   cancelLabel: string;
 };
 
@@ -14,33 +22,36 @@ export type Request = {
  * which is what buys the modal behaviour: the top layer, a focus trap, Escape,
  * and the background going inert. Only the appearance is ours.
  *
- * `ask` resolves to what they chose, so a caller reads as one line and no
- * decision has to be split across a callback:
- *
- *     if (!(await confirm.ask({ ... }))) return;
+ * Answers are a list rather than yes and no, because some questions genuinely
+ * have three answers — deleting an act asks whether its scenes should move or
+ * be trashed, and forcing that into two dialogs would be worse than asking it
+ * once. `ask` resolves to the key that was picked, or null if they backed out.
  */
-export function useConfirm(): { ask: (request: Request) => Promise<boolean>; dialog: ReactNode } {
+export function useConfirm(): {
+  ask: (request: Request) => Promise<string | null>;
+  dialog: ReactNode;
+} {
   const [request, setRequest] = useState<Request | null>(null);
   const ref = useRef<HTMLDialogElement>(null);
 
   // Held across the await. Cleared as it is called, so a stray second close
   // cannot answer a question that has already been answered.
-  const answer = useRef<((ok: boolean) => void) | null>(null);
+  const answer = useRef<((choice: string | null) => void) | null>(null);
 
   const ask = useCallback((next: Request) => {
-    return new Promise<boolean>((resolve) => {
-      answer.current?.(false);
+    return new Promise<string | null>((resolve) => {
+      answer.current?.(null);
       answer.current = resolve;
       setRequest(next);
     });
   }, []);
 
-  const close = useCallback((ok: boolean) => {
+  const close = useCallback((choice: string | null) => {
     setRequest(null);
 
     const resolve = answer.current;
     answer.current = null;
-    resolve?.(ok);
+    resolve?.(choice);
   }, []);
 
   // showModal is imperative — there is no open prop that puts an element in the
@@ -56,33 +67,40 @@ export function useConfirm(): { ask: (request: Request) => Promise<boolean>; dia
   const dialog = (
     <dialog
       ref={ref}
-      className="confirm"
+      className="modal"
       aria-labelledby="confirm-title"
       // Escape and the window close button both arrive here.
       onCancel={(event) => {
         event.preventDefault();
-        close(false);
+        close(null);
       }}
       // A click landing on the dialog itself is a click on the backdrop: the
       // panel inside it swallows anything aimed at the content.
       onClick={(event) => {
-        if (event.target === ref.current) close(false);
+        if (event.target === ref.current) close(null);
       }}
     >
       {request && (
-        <div className="confirm-panel">
+        <div className="modal-panel">
           <h2 id="confirm-title">{request.title}</h2>
           <p>{request.body}</p>
 
-          <div className="confirm-actions">
-            {/* Focused first on purpose. The destructive button should never be
-                what a reflexive Enter or Space lands on. */}
-            <button className="btn" autoFocus onClick={() => close(false)}>
+          <div className="modal-actions">
+            {/* Focused first on purpose. Backing out should never be what a
+                reflexive Enter or Space lands on the far side of. */}
+            <button className="btn" autoFocus onClick={() => close(null)}>
               {request.cancelLabel}
             </button>
-            <button className="btn btn-danger" onClick={() => close(true)}>
-              {request.confirmLabel}
-            </button>
+
+            {request.choices.map((choice) => (
+              <button
+                key={choice.key}
+                className={choice.danger ? "btn btn-danger" : "btn btn-primary"}
+                onClick={() => close(choice.key)}
+              >
+                {choice.label}
+              </button>
+            ))}
           </div>
         </div>
       )}

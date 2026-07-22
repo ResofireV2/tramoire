@@ -44,7 +44,9 @@ npm run tauri dev
 The first run compiles the whole Rust dependency tree and takes a few minutes.
 After that it is seconds, with hot reload on the frontend.
 
-Then click **Open project** and choose `sample/TestNovel.tramoire`.
+Then **Project → Open project…** (or Ctrl+O) and choose
+`sample/TestNovel.tramoire`. Whatever was open last reopens by itself next
+launch, so this is a one-time step.
 
 ## Verifying the loop
 
@@ -60,8 +62,9 @@ The sample project is committed to this repository on purpose: editing it makes
 5. Select a word, press Ctrl+B, and diff again. It is now `**word**`.
 6. Click the other scene and back. The edit persisted.
 7. Double-click a scene in the binder (or press F2 on it), retitle it, press
-   Enter. `git diff sample/` shows one changed title in `project.json` and
-   nothing else — the scene file and its `id` and `file` are untouched.
+   Enter. `git status sample/` shows the markdown file renamed to match and
+   `project.json` holding the new title and path. The scene's `id` is unchanged,
+   because that is its identity and a filename is only a label.
 8. With a scene selected, hold Alt+↓ until it crosses into act two. It keeps
    focus the whole way, so one held key walks it through the manuscript.
    `git diff sample/` shows the scene object moved between acts and nothing
@@ -70,7 +73,17 @@ The sample project is committed to this repository on purpose: editing it makes
    empty file behind it in `scenes/`. Press the **×** on a row (or Delete on a
    selected scene), confirm, and the entry goes while the markdown moves to
    `trash/`.
-10. `git checkout sample/ && git clean -fd sample/` to reset — the checkout
+10. **Project → New project…**, give it a title, choose a location. A folder
+    named after the title appears with a `project.json` and one empty scene,
+    already open with its name selected. It opens like any other project,
+    because that is literally what happens — `create_project` writes the folder
+    and hands the path to the same `open_project` the picker uses.
+11. Double-click an act header to retitle it, Alt+↑/↓ to move the whole act and
+    its scenes, **+ New act** at the foot of the binder to add one. Press **×**
+    on an act that still holds scenes: the dialog offers to move them into the
+    neighbouring act or to send them to `trash/` with their files, because
+    which one you meant is not something the app can work out for you.
+12. `git checkout sample/ && git clean -fd sample/` to reset — the checkout
     restores what was tracked, the clean removes what was created or trashed.
 
 ## Scripts
@@ -96,6 +109,7 @@ src/
     editor.ts       schema, smart typography, paste handling
     theme.ts        the two theme axes
     binder.ts       where a scene lands when it moves
+    recent.ts       which projects were open lately
   components/       presentational only, no filesystem knowledge
   styles/
     tokens.css      the only file allowed to contain a hex value
@@ -105,7 +119,7 @@ src/
 src-tauri/src/
   commands.rs       every command the frontend can call
   model.rs          the shape of project.json — mirrors storage.ts
-  naming.rs         titles into filenames
+  naming.rs         titles into filenames and folder names
   paths.rs          path containment, atomic writes, checkpoints
 
 sample/             a project to open, so the app is runnable on clone
@@ -126,6 +140,11 @@ Deleting a scene takes its entry out of the manifest and moves the file to
 `trash/`. Nothing in the app empties that folder — recovery is moving the file
 back and re-adding the entry, and disposal is deleting it yourself. A writing
 application should not be the thing that destroys prose.
+
+Filenames are lowercase ASCII slugs of the scene title, because they cross
+machines and sync clients and macOS renormalises them behind your back. Project
+folder names are not: that is the one you see in your file manager and typed
+yourself, so its spaces and capitals survive.
 
 Scene files are pure markdown with no frontmatter — all metadata lives in
 `project.json`, which keeps the Rust side dependency-free. Adding frontmatter
@@ -168,6 +187,18 @@ or mark to `lib/editor.ts` without adding it to `lib/markdown.ts` means that
 formatting is silently discarded on the next save. Add a round-trip test in the
 same commit; that is what `markdown.test.ts` is for.
 
+**The app renames only the files it named.** Retitling a scene moves its
+markdown file to match, so a folder never fills up with `untitled-scene-4.md`
+and stays the greppable thing this format promises. But that only applies when
+the current filename is one the app derived from the old title: call a file
+`ch09-six-hours.md` yourself and it is yours permanently. Ids never change
+either way — the id is identity, the filename is a label.
+
+**Creating a project ends in opening one.** `create_project` writes a folder and
+returns its path; the frontend then calls `open_project` on it like any other.
+Creation cannot drift away from what the application considers a valid project,
+because it never gets its own opinion about one.
+
 **Display settings never touch the document.** Theme, font size, line height
 and measure are CSS on a container and are stored with the application, never in
 the project folder — a shared project should not carry someone else's font size.
@@ -188,8 +219,9 @@ new one, never half of one.
 
 Each is additive. None require changing what is already here.
 
-1. **Acts** — creating, renaming, reordering and deleting them. Scenes have all
-   four; the acts holding them have none, which is the obvious next gap.
+1. **Dragging acts** — act headers as drag handles, so a whole act moves by
+   pointer as well as by Alt+↑/↓. Nested drop targets are a different problem
+   from the scene-sized ones already there, which is why it is not done yet.
 2. **Entities** — `entities/*.md` with frontmatter, one table with a `type`
    column, one link table. Characters, locations and items are the same noun.
 3. **Decorations** — the ProseMirror plugin that underlines entity names.
@@ -210,8 +242,13 @@ Each is additive. None require changing what is already here.
 - There is no prompt on quit if a save is still pending. Writes flush on window
   blur, on visibility change and before switching scenes, which covers
   everything short of a hard kill.
-- Acts cannot be created, renamed, reordered or deleted from inside the app.
-  Scenes can do all four; their acts are still hand-edited in `project.json`.
+- Acts move with Alt+↑/↓ but cannot be dragged. Scenes can be dragged; acts
+  cannot yet.
+- A project always has at least one act. Deleting the last one is refused,
+  because an act-less project has nowhere to put a scene and nothing in the
+  binder to hang the button on. New projects start with one for the same reason.
+- The recent projects list is remembered, but not which scene was open in one.
+  Reopening a project lands on the binder rather than where you left off.
 - Nothing empties `trash/`. That is deliberate, but it does mean a project
   folder only grows.
 - No entities, no snapshots, no images, no export. On purpose.

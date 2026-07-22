@@ -10,6 +10,26 @@ import type { Project } from "./storage";
 
 export type Position = { actId: string; index: number };
 
+/**
+ * Where an act lands when nudged one step, or null at the ends of the book.
+ *
+ * Same post-removal convention as everything else here: the index is a position
+ * in the act list once the act has been lifted out of it.
+ */
+export function nextActPosition(
+  project: Project | null,
+  actId: string,
+  direction: "up" | "down"
+): number | null {
+  if (!project) return null;
+
+  const index = project.acts.findIndex((act) => act.id === actId);
+  if (index === -1) return null;
+
+  if (direction === "up") return index > 0 ? index - 1 : null;
+  return index < project.acts.length - 1 ? index + 1 : null;
+}
+
 /** A gap between rows in the binder: `index` scenes sit above it. */
 export type Slot = { actId: string; index: number };
 
