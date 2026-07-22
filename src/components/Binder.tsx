@@ -1,14 +1,22 @@
 import { Fragment, useEffect, useRef, useState } from "react";
 
 import {
+  dropActPosition,
+  dropChapterPosition,
   dropPosition,
   nextActPosition,
   nextChapterPosition,
   nextPosition,
-  type Slot,
   type Spot,
 } from "../lib/binder";
-import { allScenes, type Act, type Chapter, type Project, type SceneMeta } from "../lib/storage";
+import {
+  allChapters,
+  allScenes,
+  type Act,
+  type Chapter,
+  type Project,
+  type SceneMeta,
+} from "../lib/storage";
 
 type Props = {
   project: Project | null;
@@ -30,6 +38,12 @@ type Props = {
   startRenaming?: string | null;
   onRenameStarted?: () => void;
 };
+
+type Level = "scene" | "chapter" | "act";
+
+/** What is in the air, and what it would displace. */
+type Dragged = { level: Level; id: string };
+type Over = { level: Level; parentId: string; index: number };
 
 type Named = { id: string; title: string };
 
@@ -67,6 +81,12 @@ function useInlineRename<T extends Named>(commitTitle: (item: T, title: string) 
   return { editing, draft, setDraft, start, commit, cancel };
 }
 
+/** Which half of a row the pointer is in decides which gap it means. */
+function gap(event: React.DragEvent, index: number): number {
+  const box = event.currentTarget.getBoundingClientRect();
+  return event.clientY > box.top + box.height / 2 ? index + 1 : index;
+}
+
 export function Binder({
   project,
   currentSceneId,
@@ -86,11 +106,11 @@ export function Binder({
   startRenaming,
   onRenameStarted,
 }: Props) {
-  const [over, setOver] = useState<Slot | null>(null);
+  const [over, setOver] = useState<Over | null>(null);
 
   // Kept here rather than on the drag event because dataTransfer cannot be read
-  // during dragover, only on drop, and the row has to look lifted before then.
-  const [dragging, setDragging] = useState<string | null>(null);
+  // during dragover, only on drop, and the rows have to react before then.
+  const [dragging, setDragging] = useState<Dragged | null>(null);
 
   const scenes = useInlineRename<SceneMeta>(onRename);
   const chapters = useInlineRename<Chapter>(onRenameChapter);
@@ -121,7 +141,7 @@ export function Binder({
     onRenameStarted?.();
   }, [startRenaming]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  /* --------------------------------------------------------------- moving */
+  /* -------------------------------------------------------------- keyboard */
 
   function moveScene(scene: SceneMeta, direction: "up" | "down") {
     const to = nextPosition(project, scene.id, direction);
@@ -139,26 +159,89 @@ export function Binder({
     onMoveChapter(chapter, to);
   }
 
-  function drop(slot: Slot) {
+  function moveAct(act: Act, direction: "up" | "down") {
+    const to = nextActPosition(project, act.id, direction);
+    if (to === null) return;
+
+    refocus.current = act.id;
+    onMoveAct(act, to);
+  }
+
+  /* ----------------------------------------------------------- dragging */
+
+  /**
+   * What is being dragged decides which drop zones are live. A scene ignores
+   * the gaps between chapters, a chapter ignores the gaps between scenes, and
+   * a zone that does not answer lets the event bubble to the container that
+   * does. Without that, three nested targets fight over every pixel.
+   */
+  function zone(event: React.DragEvent, level: Level, target: Over) {
+    if (dragging?.level !== level) return;
+
+    event.preventDefault();
+    // The container underneath would otherwise overwrite this with its own,
+    // coarser answer, and every drop would land at the end of something.
+    event.stopPropagation();
+    setOver(target);
+  }
+
+  /**
+   * Committed from state rather than from the drop event, because the last
+   * dragover already worked out where the pointer was — and dataTransfer is
+   * only readable here, too late to have driven the indicator.
+   */
+  function drop() {
+    const dragged = dragging;
+    const target = over;
+
     setDragging(null);
     setOver(null);
-    if (!dragging) return;
+    if (!dragged || !target || dragged.level !== target.level) return;
 
-    const id = dragging;
-    const scene = allScenes(project).find((s) => s.id === id);
-    const to = dropPosition(project, id, slot);
-    if (!scene || !to) return;
+    refocus.current = dragged.id;
 
-    refocus.current = id;
-    onMove(scene, to);
+    if (dragged.level === "scene") {
+      const scene = allScenes(project).find((s) => s.id === dragged.id);
+      const to = dropPosition(project, dragged.id, target);
+      if (scene && to) onMove(scene, to);
+      return;
+    }
+
+    if (dragged.level === "chapter") {
+      const chapter = allChapters(project).find((c) => c.id === dragged.id);
+      const to = dropChapterPosition(project, dragged.id, target);
+      if (chapter && to) onMoveChapter(chapter, to);
+      return;
+    }
+
+    const act = project?.acts.find((a) => a.id === dragged.id);
+    const to = dropActPosition(project, dragged.id, target.index);
+    if (act && to !== null) onMoveAct(act, to);
   }
 
-  /** Which side of a row the pointer is on decides which gap it means. */
-  function slotUnder(event: React.DragEvent, chapterId: string, index: number): Slot {
-    const box = event.currentTarget.getBoundingClientRect();
-    const below = event.clientY > box.top + box.height / 2;
-    return { parentId: chapterId, index: index + (below ? 1 : 0) };
+  /** The handle attributes every draggable header and row shares. */
+  function handle(level: Level, id: string) {
+    return {
+      draggable: true,
+      "data-dragging": dragging?.id === id,
+      onDragStart: (event: React.DragEvent) => {
+        setDragging({ level, id });
+        event.dataTransfer.effectAllowed = "move";
+        // Not read back — state carries it — but Firefox will not start a drag
+        // without data on the transfer.
+        event.dataTransfer.setData("text/plain", id);
+      },
+      onDragEnd: () => {
+        setDragging(null);
+        setOver(null);
+      },
+    };
   }
+
+  const line = (level: Level, parentId: string, index: number) =>
+    over?.level === level && over.parentId === parentId && over.index === index ? (
+      <div className={`drop-line drop-line-${level}`} />
+    ) : null;
 
   /* -------------------------------------------------------------- making */
 
@@ -192,242 +275,257 @@ export function Binder({
   }
 
   return (
-    <nav className="binder" aria-label="Binder">
-      {project.acts.map((act) => (
-        <div key={act.id} className="act-group">
-          {acts.editing === act.id ? (
-            <input
-              className="act-rename"
-              aria-label="Act title"
-              value={acts.draft}
-              autoFocus
-              onChange={(event) => acts.setDraft(event.target.value)}
-              onBlur={() => acts.commit(act)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") acts.commit(act);
-                if (event.key === "Escape") acts.cancel();
-              }}
-            />
-          ) : (
-            <div className="act">
-              <button
-                className="act-title"
-                ref={(el) => {
-                  if (el) buttons.current.set(act.id, el);
-                  else buttons.current.delete(act.id);
-                }}
-                onDoubleClick={() => acts.start(act)}
-                onClick={(event) => event.currentTarget.focus()}
+    <nav className="binder" aria-label="Binder" onDrop={() => drop()}>
+      {project.acts.map((act, actIndex) => (
+        <Fragment key={act.id}>
+          {line("act", "", actIndex)}
+
+          <div
+            className="act-group"
+            onDragOver={(event) => {
+              // Anywhere in an act's body means the end of it: past its last
+              // chapter, or into it when it has none at all.
+              zone(event, "chapter", {
+                level: "chapter",
+                parentId: act.id,
+                index: act.chapters.length,
+              });
+              zone(event, "act", { level: "act", parentId: "", index: actIndex + 1 });
+            }}
+          >
+            {acts.editing === act.id ? (
+              <input
+                className="act-rename"
+                aria-label="Act title"
+                value={acts.draft}
+                autoFocus
+                onChange={(event) => acts.setDraft(event.target.value)}
+                onBlur={() => acts.commit(act)}
                 onKeyDown={(event) => {
-                  if (event.key === "F2") acts.start(act);
-
-                  if (event.altKey && (event.key === "ArrowUp" || event.key === "ArrowDown")) {
-                    event.preventDefault();
-                    const to = nextActPosition(
-                      project,
-                      act.id,
-                      event.key === "ArrowUp" ? "up" : "down"
-                    );
-                    if (to !== null) {
-                      refocus.current = act.id;
-                      onMoveAct(act, to);
-                    }
-                  }
+                  if (event.key === "Enter") acts.commit(act);
+                  if (event.key === "Escape") acts.cancel();
                 }}
+              />
+            ) : (
+              <div
+                className="act"
+                onDragOver={(event) =>
+                  zone(event, "act", { level: "act", parentId: "", index: gap(event, actIndex) })
+                }
               >
-                {act.title}
-              </button>
-
-              <button
-                className="act-add"
-                aria-label={`Add a chapter to ${act.title}`}
-                onClick={() => void createChapter(act)}
-              >
-                +
-              </button>
-              <button
-                className="act-delete"
-                aria-label={`Delete ${act.title}`}
-                onClick={() => onDeleteAct(act)}
-              >
-                ×
-              </button>
-            </div>
-          )}
-
-          {act.chapters.map((chapter) => (
-            <div
-              key={chapter.id}
-              className="chapter-group"
-              // The chapter is the drop target for everything below its last
-              // scene, which is the only way into one that has been emptied.
-              onDragOver={(event) => {
-                event.preventDefault();
-                setOver({ parentId: chapter.id, index: chapter.scenes.length });
-              }}
-              onDrop={(event) => {
-                event.preventDefault();
-                drop({ parentId: chapter.id, index: chapter.scenes.length });
-              }}
-            >
-              {chapters.editing === chapter.id ? (
-                <input
-                  className="chapter-rename"
-                  aria-label="Chapter title"
-                  value={chapters.draft}
-                  autoFocus
-                  onChange={(event) => chapters.setDraft(event.target.value)}
-                  onBlur={() => chapters.commit(chapter)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter") chapters.commit(chapter);
-                    if (event.key === "Escape") chapters.cancel();
+                <button
+                  className="act-title"
+                  ref={(el) => {
+                    if (el) buttons.current.set(act.id, el);
+                    else buttons.current.delete(act.id);
                   }}
-                />
-              ) : (
-                <div className="chapter">
-                  <button
-                    className="chapter-title"
-                    ref={(el) => {
-                      if (el) buttons.current.set(chapter.id, el);
-                      else buttons.current.delete(chapter.id);
-                    }}
-                    onDoubleClick={() => chapters.start(chapter)}
-                    onClick={(event) => event.currentTarget.focus()}
-                    onKeyDown={(event) => {
-                      if (event.key === "F2") chapters.start(chapter);
+                  {...handle("act", act.id)}
+                  onDoubleClick={() => acts.start(act)}
+                  onClick={(event) => event.currentTarget.focus()}
+                  onKeyDown={(event) => {
+                    if (event.key === "F2") acts.start(act);
 
-                      if (event.altKey && event.key === "ArrowUp") {
-                        event.preventDefault();
-                        moveChapter(chapter, "up");
-                      }
-                      if (event.altKey && event.key === "ArrowDown") {
-                        event.preventDefault();
-                        moveChapter(chapter, "down");
-                      }
-                    }}
-                  >
-                    {chapter.title}
-                  </button>
+                    if (event.altKey && event.key === "ArrowUp") {
+                      event.preventDefault();
+                      moveAct(act, "up");
+                    }
+                    if (event.altKey && event.key === "ArrowDown") {
+                      event.preventDefault();
+                      moveAct(act, "down");
+                    }
+                  }}
+                >
+                  {act.title}
+                </button>
 
-                  <button
-                    className="chapter-add"
-                    aria-label={`Add a scene to ${chapter.title}`}
-                    onClick={() => void createScene(chapter)}
-                  >
-                    +
-                  </button>
-                  <button
-                    className="chapter-delete"
-                    aria-label={`Delete ${chapter.title}`}
-                    onClick={() => onDeleteChapter(chapter)}
-                  >
-                    ×
-                  </button>
-                </div>
-              )}
+                <button
+                  className="act-add"
+                  aria-label={`Add a chapter to ${act.title}`}
+                  onClick={() => void createChapter(act)}
+                >
+                  +
+                </button>
+                <button
+                  className="act-delete"
+                  aria-label={`Delete ${act.title}`}
+                  onClick={() => onDeleteAct(act)}
+                >
+                  ×
+                </button>
+              </div>
+            )}
 
-              {chapter.scenes.map((scene, index) => (
-                <Fragment key={scene.id}>
-                  {over?.parentId === chapter.id && over.index === index && (
-                    <div className="drop-line" />
-                  )}
+            {act.chapters.map((chapter, chapterIndex) => (
+              <Fragment key={chapter.id}>
+                {line("chapter", act.id, chapterIndex)}
 
-                  {scenes.editing === scene.id ? (
+                <div
+                  className="chapter-group"
+                  onDragOver={(event) => {
+                    zone(event, "scene", {
+                      level: "scene",
+                      parentId: chapter.id,
+                      index: chapter.scenes.length,
+                    });
+                    zone(event, "chapter", {
+                      level: "chapter",
+                      parentId: act.id,
+                      index: chapterIndex + 1,
+                    });
+                  }}
+                >
+                  {chapters.editing === chapter.id ? (
                     <input
-                      className="scene-rename"
-                      aria-label="Scene title"
-                      value={scenes.draft}
+                      className="chapter-rename"
+                      aria-label="Chapter title"
+                      value={chapters.draft}
                       autoFocus
-                      onChange={(event) => scenes.setDraft(event.target.value)}
-                      onBlur={() => scenes.commit(scene)}
+                      onChange={(event) => chapters.setDraft(event.target.value)}
+                      onBlur={() => chapters.commit(chapter)}
                       onKeyDown={(event) => {
-                        if (event.key === "Enter") scenes.commit(scene);
-                        if (event.key === "Escape") scenes.cancel();
+                        if (event.key === "Enter") chapters.commit(chapter);
+                        if (event.key === "Escape") chapters.cancel();
                       }}
                     />
                   ) : (
                     <div
-                      className="scene-row"
-                      onDragOver={(event) => {
-                        event.preventDefault();
-                        // Without this the chapter underneath overwrites the
-                        // precise slot with "the end", and every drop lands at
-                        // the bottom.
-                        event.stopPropagation();
-                        setOver(slotUnder(event, chapter.id, index));
-                      }}
-                      onDrop={(event) => {
-                        event.preventDefault();
-                        event.stopPropagation();
-                        drop(slotUnder(event, chapter.id, index));
-                      }}
+                      className="chapter"
+                      onDragOver={(event) =>
+                        zone(event, "chapter", {
+                          level: "chapter",
+                          parentId: act.id,
+                          index: gap(event, chapterIndex),
+                        })
+                      }
                     >
                       <button
+                        className="chapter-title"
                         ref={(el) => {
-                          if (el) buttons.current.set(scene.id, el);
-                          else buttons.current.delete(scene.id);
+                          if (el) buttons.current.set(chapter.id, el);
+                          else buttons.current.delete(chapter.id);
                         }}
-                        className="scene"
-                        aria-current={currentSceneId === scene.id}
-                        draggable
-                        data-dragging={dragging === scene.id}
-                        onDragStart={(event) => {
-                          setDragging(scene.id);
-                          event.dataTransfer.effectAllowed = "move";
-                          // Not read back — state carries it — but Firefox will
-                          // not start a drag without data on the transfer.
-                          event.dataTransfer.setData("text/plain", scene.id);
-                        }}
-                        onDragEnd={() => {
-                          setDragging(null);
-                          setOver(null);
-                        }}
-                        // Focused explicitly because WebKit — the webview on
-                        // Linux and macOS both — does not focus a button on
-                        // click the way Chromium does, and Alt+↑/↓ has to reach
-                        // something.
-                        onClick={(event) => {
-                          event.currentTarget.focus();
-                          onSelect(scene);
-                        }}
-                        onDoubleClick={() => scenes.start(scene)}
+                        {...handle("chapter", chapter.id)}
+                        onDoubleClick={() => chapters.start(chapter)}
+                        onClick={(event) => event.currentTarget.focus()}
                         onKeyDown={(event) => {
-                          if (event.key === "F2") scenes.start(scene);
-                          if (event.key === "Delete") onDelete(scene);
+                          if (event.key === "F2") chapters.start(chapter);
 
                           if (event.altKey && event.key === "ArrowUp") {
                             event.preventDefault();
-                            moveScene(scene, "up");
+                            moveChapter(chapter, "up");
                           }
                           if (event.altKey && event.key === "ArrowDown") {
                             event.preventDefault();
-                            moveScene(scene, "down");
+                            moveChapter(chapter, "down");
                           }
                         }}
                       >
-                        <span className="t">{scene.title}</span>
-                        <span className="m">{scene.status}</span>
+                        {chapter.title}
                       </button>
 
                       <button
-                        className="scene-delete"
-                        aria-label={`Move ${scene.title} to trash`}
-                        onClick={() => onDelete(scene)}
+                        className="chapter-add"
+                        aria-label={`Add a scene to ${chapter.title}`}
+                        onClick={() => void createScene(chapter)}
+                      >
+                        +
+                      </button>
+                      <button
+                        className="chapter-delete"
+                        aria-label={`Delete ${chapter.title}`}
+                        onClick={() => onDeleteChapter(chapter)}
                       >
                         ×
                       </button>
                     </div>
                   )}
-                </Fragment>
-              ))}
 
-              {over?.parentId === chapter.id && over.index === chapter.scenes.length && (
-                <div className="drop-line" />
-              )}
-            </div>
-          ))}
-        </div>
+                  {chapter.scenes.map((scene, index) => (
+                    <Fragment key={scene.id}>
+                      {line("scene", chapter.id, index)}
+
+                      {scenes.editing === scene.id ? (
+                        <input
+                          className="scene-rename"
+                          aria-label="Scene title"
+                          value={scenes.draft}
+                          autoFocus
+                          onChange={(event) => scenes.setDraft(event.target.value)}
+                          onBlur={() => scenes.commit(scene)}
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter") scenes.commit(scene);
+                            if (event.key === "Escape") scenes.cancel();
+                          }}
+                        />
+                      ) : (
+                        <div
+                          className="scene-row"
+                          onDragOver={(event) =>
+                            zone(event, "scene", {
+                              level: "scene",
+                              parentId: chapter.id,
+                              index: gap(event, index),
+                            })
+                          }
+                        >
+                          <button
+                            ref={(el) => {
+                              if (el) buttons.current.set(scene.id, el);
+                              else buttons.current.delete(scene.id);
+                            }}
+                            className="scene"
+                            aria-current={currentSceneId === scene.id}
+                            {...handle("scene", scene.id)}
+                            // Focused explicitly because WebKit — the webview on
+                            // Linux and macOS both — does not focus a button on
+                            // click the way Chromium does, and Alt+↑/↓ has to
+                            // reach something.
+                            onClick={(event) => {
+                              event.currentTarget.focus();
+                              onSelect(scene);
+                            }}
+                            onDoubleClick={() => scenes.start(scene)}
+                            onKeyDown={(event) => {
+                              if (event.key === "F2") scenes.start(scene);
+                              if (event.key === "Delete") onDelete(scene);
+
+                              if (event.altKey && event.key === "ArrowUp") {
+                                event.preventDefault();
+                                moveScene(scene, "up");
+                              }
+                              if (event.altKey && event.key === "ArrowDown") {
+                                event.preventDefault();
+                                moveScene(scene, "down");
+                              }
+                            }}
+                          >
+                            <span className="t">{scene.title}</span>
+                            <span className="m">{scene.status}</span>
+                          </button>
+
+                          <button
+                            className="scene-delete"
+                            aria-label={`Move ${scene.title} to trash`}
+                            onClick={() => onDelete(scene)}
+                          >
+                            ×
+                          </button>
+                        </div>
+                      )}
+                    </Fragment>
+                  ))}
+
+                  {line("scene", chapter.id, chapter.scenes.length)}
+                </div>
+              </Fragment>
+            ))}
+
+            {line("chapter", act.id, act.chapters.length)}
+          </div>
+        </Fragment>
       ))}
+
+      {line("act", "", project.acts.length)}
 
       <button className="act-new" onClick={() => void createAct()}>
         + New act

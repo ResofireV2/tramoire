@@ -35,6 +35,15 @@ const chapterLevels = (project: Project | null): Level[] =>
 const actLevels = (project: Project | null): Level[] =>
   project?.acts.map((act) => ({ id: act.id, items: act.chapters })) ?? [];
 
+/**
+ * Acts sit in no container, so for the arithmetic they sit in one nameless
+ * container holding the whole book. That is enough for the same functions to
+ * work on them, rather than a third copy of the same off-by-one.
+ */
+const bookLevel = (project: Project | null): Level[] => [
+  { id: "", items: project?.acts ?? [] },
+];
+
 /* --------------------------------------------------------------- stepping */
 
 /**
@@ -141,4 +150,13 @@ export function dropChapterPosition(
   slot: Slot
 ): Spot | null {
   return land(actLevels(project), chapterId, slot);
+}
+
+/** Where a dragged act lands. An index on its own, having no container. */
+export function dropActPosition(
+  project: Project | null,
+  actId: string,
+  index: number
+): number | null {
+  return land(bookLevel(project), actId, { parentId: "", index })?.index ?? null;
 }

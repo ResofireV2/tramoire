@@ -80,13 +80,16 @@ The sample project is committed to this repository on purpose: editing it makes
     already open with its name selected. It opens like any other project,
     because that is literally what happens — `create_project` writes the folder
     and hands the path to the same `open_project` the picker uses.
-11. Double-click any act or chapter header to retitle it, Alt+↑/↓ to move it
-    with everything inside, **+** on an act to add a chapter, **+ New act** at
-    the foot of the binder. Press **×** on one that still holds something: the
-    dialog offers to move its contents into the neighbour or to send every
-    scene file to `trash/`, because which one you meant is not something the
-    app can work out for you.
-12. `git checkout sample/ && git clean -fd sample/` to reset — the checkout
+11. Double-click any act or chapter header to retitle it, Alt+↑/↓ or drag it to
+    move it with everything inside, **+** on an act to add a chapter, **+ New
+    act** at the foot of the binder. Press **×** on one that still holds
+    something: the dialog offers to move its contents into the neighbour or to
+    send every scene file to `trash/`, because which one you meant is not
+    something the app can work out for you.
+12. Drag an act header while watching the indicator. It only ever offers gaps
+    between acts — the chapter and scene rows underneath stay inert, because
+    what is being dragged decides which drop zones are live.
+13. `git checkout sample/ && git clean -fd sample/` to reset — the checkout
     restores what was tracked, the clean removes what was created or trashed.
 
 ## Scripts
@@ -234,12 +237,13 @@ new one, never half of one.
 
 Each is additive. None require changing what is already here.
 
-1. **Dragging acts and chapters** — their headers as drag handles, so a whole
-   act or chapter moves by pointer as well as by Alt+↑/↓. Nested drop targets
-   are a different problem from the scene-sized ones already there, which is
-   why it is not done yet.
-2. **Entities** — `entities/*.md` with frontmatter, one table with a `type`
-   column, one link table. Characters, locations and items are the same noun.
+1. **Entities** — `entities/*.md` with frontmatter, one table with a `type`
+   column, one link table. Characters, locations, items and magic systems are
+   the same noun, which is what makes each new one nearly free.
+2. **The icon rail** — a column down the left switching between the manuscript,
+   the entities and a notes tree. It ships with entities rather than before
+   them: a rail with one working icon and eight dead ones advertises rooms that
+   do not exist.
 3. **Decorations** — the ProseMirror plugin that underlines entity names.
    Decorations, not marks: nothing is written into the document, so renaming an
    entity updates every highlight with no migration.
@@ -258,7 +262,6 @@ Each is additive. None require changing what is already here.
 - There is no prompt on quit if a save is still pending. Writes flush on window
   blur, on visibility change and before switching scenes, which covers
   everything short of a hard kill.
-- Acts and chapters move with Alt+↑/↓ but cannot be dragged. Scenes can be.
 - A project always has at least one act. Deleting the last one is refused,
   because an act-less project has nowhere to put a chapter and nothing in the
   binder to hang the button on. New projects start with one act holding one

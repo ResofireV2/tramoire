@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  dropActPosition,
   dropChapterPosition,
   dropPosition,
   nextActPosition,
@@ -159,8 +160,18 @@ describe("dropping", () => {
     });
   });
 
+  it("applies them again to acts, which have no container", () => {
+    expect(dropActPosition(project, "act-1", 2)).toBe(1);
+    expect(dropActPosition(project, "act-2", 0)).toBe(0);
+
+    // Both slots around an act leave it where it was.
+    expect(dropActPosition(project, "act-1", 0)).toBeNull();
+    expect(dropActPosition(project, "act-1", 1)).toBeNull();
+  });
+
   it("returns null for a scene or project that is not there", () => {
     expect(dropPosition(project, "nope", { parentId: "ch-1", index: 0 })).toBeNull();
     expect(dropPosition(null, "one", { parentId: "ch-1", index: 0 })).toBeNull();
+    expect(dropActPosition(project, "act-9", 0)).toBeNull();
   });
 });

@@ -241,12 +241,19 @@ button {
 .scene-delete:focus { opacity: 1; }
 .scene-delete:hover { background: var(--chrome-panel); color: var(--chrome-text); }
 
+/* Indented to sit where the thing being dragged would land, so the level it
+   belongs to is readable without reading the labels either side of it. */
 .drop-line {
   height: 2px;
-  margin: 1px 8px;
   border-radius: 2px;
   background: var(--chrome-accent);
 }
+.drop-line-scene { margin: 1px 8px 1px 34px; }
+.drop-line-chapter { margin: 3px 8px 3px 16px; }
+.drop-line-act { height: 3px; margin: 6px 4px; }
+
+.act-title[data-dragging="true"],
+.chapter-title[data-dragging="true"] { opacity: 0.4; }
 .scene .t { display: block; font-size: 16px; color: var(--chrome-text-2); }
 .scene .m { display: block; font-size: 13.5px; color: var(--chrome-text-3); margin-top: 3px; }
 .scene:hover { background: var(--chrome-panel); }
