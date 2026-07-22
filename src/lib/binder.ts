@@ -1,20 +1,91 @@
 /**
- * Where a scene lands when it moves.
+ * Where something lands when it moves.
  *
- * Pure arithmetic over the act tree — no filesystem, no React. The index this
- * produces means the same thing `move_scene` means in Rust: a position in the
- * destination act *after* the scene has been lifted out of wherever it was.
+ * Pure arithmetic over the tree — no filesystem, no React. Indices mean what
+ * they mean in Rust: a position in the destination *after* the thing being
+ * moved has been lifted out of wherever it was.
+ *
+ * A scene inside a chapter and a chapter inside an act are the same problem, so
+ * they share one implementation. The off-by-one that makes a downward move
+ * different from an upward one is subtle enough that having it written twice
+ * would be having it wrong once.
  */
 
-import type { Project } from "./storage";
+import { allChapters, type Project } from "./storage";
 
-export type Position = { actId: string; index: number };
+/** A destination: something to go into, and where inside it. */
+export type Spot = {
+  /** A chapter id when moving a scene, an act id when moving a chapter. */
+  parentId: string;
+  index: number;
+};
+
+/** A gap in the binder, measured against the tree as it looks now. */
+export type Slot = Spot;
+
+/** A container and what is in it, which is all the arithmetic needs to know. */
+type Level = {
+  id: string;
+  items: { id: string }[];
+};
+
+const chapterLevels = (project: Project | null): Level[] =>
+  allChapters(project).map((chapter) => ({ id: chapter.id, items: chapter.scenes }));
+
+const actLevels = (project: Project | null): Level[] =>
+  project?.acts.map((act) => ({ id: act.id, items: act.chapters })) ?? [];
+
+/* --------------------------------------------------------------- stepping */
 
 /**
- * Where an act lands when nudged one step, or null at the ends of the book.
- *
- * Same post-removal convention as everything else here: the index is a position
- * in the act list once the act has been lifted out of it.
+ * One step up or down, crossing into the neighbouring container at the ends.
+ * Null when there is nowhere left to go.
+ */
+function step(levels: Level[], childId: string, direction: "up" | "down"): Spot | null {
+  const at = levels.findIndex((level) => level.items.some((item) => item.id === childId));
+  if (at === -1) return null;
+
+  const level = levels[at];
+  const index = level.items.findIndex((item) => item.id === childId);
+
+  if (direction === "up") {
+    // Within the container the slot above is index - 1: everything above keeps
+    // its position when the item is lifted out, so no adjustment.
+    if (index > 0) return { parentId: level.id, index: index - 1 };
+
+    const previous = levels[at - 1];
+    return previous ? { parentId: previous.id, index: previous.items.length } : null;
+  }
+
+  // Downward is the one that needs care: index + 1 rather than index + 2,
+  // because lifting the item out shifts its successor up into its place.
+  if (index < level.items.length - 1) return { parentId: level.id, index: index + 1 };
+
+  const next = levels[at + 1];
+  return next ? { parentId: next.id, index: 0 } : null;
+}
+
+/** Where a scene goes when nudged. `parentId` is a chapter. */
+export function nextPosition(
+  project: Project | null,
+  sceneId: string,
+  direction: "up" | "down"
+): Spot | null {
+  return step(chapterLevels(project), sceneId, direction);
+}
+
+/** Where a chapter goes when nudged. `parentId` is an act. */
+export function nextChapterPosition(
+  project: Project | null,
+  chapterId: string,
+  direction: "up" | "down"
+): Spot | null {
+  return step(actLevels(project), chapterId, direction);
+}
+
+/**
+ * Where an act goes when nudged. Acts sit in no container, so this is an index
+ * on its own rather than a spot.
  */
 export function nextActPosition(
   project: Project | null,
@@ -30,74 +101,44 @@ export function nextActPosition(
   return index < project.acts.length - 1 ? index + 1 : null;
 }
 
-/** A gap between rows in the binder: `index` scenes sit above it. */
-export type Slot = { actId: string; index: number };
+/* --------------------------------------------------------------- dropping */
 
 /**
- * Where a dragged scene lands when dropped into a slot, or null if the drop
+ * Where a dragged item lands when dropped into a slot, or null if the drop
  * would not move it.
  *
  * A slot is measured against the tree as it looks during the drag, with the
- * scene still in it. `move_scene` wants the index after the scene is lifted
- * out, so a slot below the scene's own position in its own act is one too high.
+ * item still in it, so a slot below the item's own position in its own
+ * container is one too high.
  */
+function land(levels: Level[], childId: string, slot: Slot): Spot | null {
+  const level = levels.find((l) => l.items.some((item) => item.id === childId));
+  if (!level) return null;
+
+  const from = level.items.findIndex((item) => item.id === childId);
+  const same = slot.parentId === level.id;
+
+  const index = same && slot.index > from ? slot.index - 1 : slot.index;
+
+  // Both slots either side of an item leave it exactly where it was. A drag
+  // that ends where it started should cost nothing, not a manifest write.
+  if (same && index === from) return null;
+
+  return { parentId: slot.parentId, index };
+}
+
 export function dropPosition(
   project: Project | null,
   sceneId: string,
   slot: Slot
-): Position | null {
-  if (!project) return null;
-
-  const act = project.acts.find((a) => a.scenes.some((scene) => scene.id === sceneId));
-  if (!act) return null;
-
-  const from = act.scenes.findIndex((scene) => scene.id === sceneId);
-  const sameAct = slot.actId === act.id;
-
-  const index = sameAct && slot.index > from ? slot.index - 1 : slot.index;
-
-  // Both slots either side of a scene leave it exactly where it was. A drag
-  // that ends where it started should cost nothing, not a manifest write.
-  if (sameAct && index === from) return null;
-
-  return { actId: slot.actId, index };
+): Spot | null {
+  return land(chapterLevels(project), sceneId, slot);
 }
 
-/**
- * The position a scene moves to when nudged one step, or null if there is
- * nowhere left to go — the top of the first act or the end of the last.
- *
- * Stepping off the end of an act carries into the next one, so holding the key
- * walks a scene through the whole manuscript rather than stopping at a boundary.
- */
-export function nextPosition(
+export function dropChapterPosition(
   project: Project | null,
-  sceneId: string,
-  direction: "up" | "down"
-): Position | null {
-  if (!project) return null;
-
-  const actIndex = project.acts.findIndex((act) =>
-    act.scenes.some((scene) => scene.id === sceneId)
-  );
-  if (actIndex === -1) return null;
-
-  const act = project.acts[actIndex];
-  const index = act.scenes.findIndex((scene) => scene.id === sceneId);
-
-  if (direction === "up") {
-    // Within the act, the slot above is index - 1. Removal happens first, but
-    // everything above the scene keeps its position, so no adjustment.
-    if (index > 0) return { actId: act.id, index: index - 1 };
-
-    const previous = project.acts[actIndex - 1];
-    return previous ? { actId: previous.id, index: previous.scenes.length } : null;
-  }
-
-  // Downward is the one that needs care: index + 1 rather than index + 2,
-  // because lifting the scene out shifts its successor up into its place.
-  if (index < act.scenes.length - 1) return { actId: act.id, index: index + 1 };
-
-  const next = project.acts[actIndex + 1];
-  return next ? { actId: next.id, index: 0 } : null;
+  chapterId: string,
+  slot: Slot
+): Spot | null {
+  return land(actLevels(project), chapterId, slot);
 }

@@ -9,12 +9,14 @@ import { StatusBar } from "./components/StatusBar";
 import { TopBar } from "./components/TopBar";
 
 import { createSaver, type SaveState, type SaveTarget } from "./lib/autosave";
-import type { Position } from "./lib/binder";
+import type { Spot } from "./lib/binder";
 import { editorProps, editorText, extensions } from "./lib/editor";
 import { countWords, docToMd, mdToDoc } from "./lib/markdown";
 import * as recent from "./lib/recent";
 import * as storage from "./lib/storage";
 import { applyTheme, loadTheme, saveTheme, type Theme } from "./lib/theme";
+
+const count = (n: number, noun: string) => `${n} ${noun}${n === 1 ? "" : "s"}`;
 
 export default function App() {
   const [project, setProject] = useState<storage.Project | null>(null);
@@ -216,11 +218,11 @@ export default function App() {
   );
 
   const moveScene = useCallback(
-    async (meta: storage.SceneMeta, to: Position) => {
+    async (meta: storage.SceneMeta, to: Spot) => {
       if (!projectPath) return;
 
       try {
-        setProject(await storage.moveScene(projectPath, meta.id, to.actId, to.index));
+        setProject(await storage.moveScene(projectPath, meta.id, to.parentId, to.index));
       } catch (error) {
         setSaveState("error");
         setSaveError(String(error));
@@ -230,15 +232,15 @@ export default function App() {
   );
 
   const createScene = useCallback(
-    async (act: storage.Act) => {
+    async (chapter: storage.Chapter) => {
       if (!projectPath) return null;
 
       try {
         const made = await storage.createScene(
           projectPath,
-          act.id,
+          chapter.id,
           "Untitled scene",
-          act.scenes.length
+          chapter.scenes.length
         );
 
         setProject(made.project);
@@ -290,6 +292,115 @@ export default function App() {
       }
     },
     [ask, editor, projectPath, saver, scene?.id]
+  );
+
+  /* ------------------------------------------------------------- chapters */
+
+  const createChapter = useCallback(
+    async (act: storage.Act) => {
+      if (!projectPath) return null;
+
+      try {
+        const updated = await storage.createChapter(
+          projectPath,
+          act.id,
+          "Untitled chapter",
+          act.chapters.length
+        );
+
+        setProject(updated);
+
+        const fresh = updated.acts.find((a) => a.id === act.id);
+        return fresh?.chapters[fresh.chapters.length - 1] ?? null;
+      } catch (error) {
+        setSaveState("error");
+        setSaveError(String(error));
+        return null;
+      }
+    },
+    [projectPath]
+  );
+
+  const renameChapter = useCallback(
+    async (chapter: storage.Chapter, title: string) => {
+      if (!projectPath) return;
+
+      try {
+        setProject(await storage.renameChapter(projectPath, chapter.id, title));
+      } catch (error) {
+        setSaveState("error");
+        setSaveError(String(error));
+      }
+    },
+    [projectPath]
+  );
+
+  const moveChapter = useCallback(
+    async (chapter: storage.Chapter, to: Spot) => {
+      if (!projectPath) return;
+
+      try {
+        setProject(await storage.moveChapter(projectPath, chapter.id, to.parentId, to.index));
+      } catch (error) {
+        setSaveState("error");
+        setSaveError(String(error));
+      }
+    },
+    [projectPath]
+  );
+
+  const deleteChapter = useCallback(
+    async (chapter: storage.Chapter) => {
+      if (!projectPath || !project) return;
+
+      let contents: storage.Contents = "move";
+
+      if (chapter.scenes.length > 0) {
+        // The chapter before it in reading order, which may be in another act.
+        const all = storage.allChapters(project);
+        const at = all.findIndex((c) => c.id === chapter.id);
+        const into: storage.Chapter | undefined = all[at - 1] ?? all[at + 1];
+
+        const answer = await ask({
+          title: `Delete “${chapter.title}”?`,
+          body: into
+            ? `It holds ${count(chapter.scenes.length, "scene")}. They can join ` +
+              `“${into.title}” instead, or go to the trash folder with their files.`
+            : `It holds ${count(chapter.scenes.length, "scene")}, and it is the only ` +
+              `chapter in the project, so there is nowhere for them to move to.`,
+          choices: [
+            ...(into ? [{ key: "move", label: `Move scenes to “${into.title}”` }] : []),
+            { key: "trash", label: "Move everything to trash", danger: true },
+          ],
+          cancelLabel: "Cancel",
+        });
+
+        if (answer !== "move" && answer !== "trash") return;
+        contents = answer;
+      }
+
+      if (chapter.scenes.some((s) => s.file === targetRef.current?.file)) {
+        saver.cancel();
+        targetRef.current = null;
+      }
+
+      try {
+        setProject(await storage.deleteChapter(projectPath, chapter.id, contents));
+
+        // Only trashing removes scenes; moving keeps every one of them.
+        if (contents === "trash" && chapter.scenes.some((s) => s.id === scene?.id)) {
+          setScene(null);
+          editor?.commands.clearContent();
+          setWords(0);
+          setSaveState("idle");
+          setSaveError(null);
+        }
+      } catch (error) {
+        setSaveState("error");
+        setSaveError(String(error));
+      }
+    },
+    [ask, editor, project, projectPath, saver, scene?.id]
   );
 
   /* ----------------------------------------------------------------- acts */
@@ -346,43 +457,45 @@ export default function App() {
         return;
       }
 
-      let choice: storage.ActScenes = "move";
+      const inside = act.chapters.flatMap((chapter) => chapter.scenes);
+      let contents: storage.Contents = "move";
 
-      if (act.scenes.length > 0) {
+      if (act.chapters.length > 0) {
         // Where "move" would put them, so the button can say so rather than
         // making someone guess which neighbour it means.
         const index = project.acts.indexOf(act);
-        const into = project.acts[index - 1] ?? project.acts[index + 1];
+        const into: storage.Act | undefined = project.acts[index - 1] ?? project.acts[index + 1];
 
         const answer = await ask({
           title: `Delete “${act.title}”?`,
-          body: `It holds ${act.scenes.length} ${
-            act.scenes.length === 1 ? "scene" : "scenes"
-          }. They can join “${into.title}” instead, or go to the trash folder with their files.`,
+          body:
+            `It holds ${count(act.chapters.length, "chapter")} and ` +
+            `${count(inside.length, "scene")}. The chapters can join “${into.title}” ` +
+            `instead, or every scene file can go to the trash folder.`,
           choices: [
-            { key: "move", label: `Move scenes to “${into.title}”` },
+            { key: "move", label: `Move chapters to “${into.title}”` },
             { key: "trash", label: "Move everything to trash", danger: true },
           ],
           cancelLabel: "Cancel",
         });
 
         if (answer !== "move" && answer !== "trash") return;
-        choice = answer;
+        contents = answer;
       }
 
       // A queued write for a scene inside this act would recreate a file that
       // is on its way to trash.
-      if (act.scenes.some((s) => s.file === targetRef.current?.file)) {
+      if (inside.some((s) => s.file === targetRef.current?.file)) {
         saver.cancel();
         targetRef.current = null;
       }
 
       try {
-        const updated = await storage.deleteAct(projectPath, act.id, choice);
+        const updated = await storage.deleteAct(projectPath, act.id, contents);
         setProject(updated);
 
         // Only trashing removes scenes; moving keeps every one of them.
-        if (choice === "trash" && act.scenes.some((s) => s.id === scene?.id)) {
+        if (contents === "trash" && inside.some((s) => s.id === scene?.id)) {
           setScene(null);
           editor?.commands.clearContent();
           setWords(0);
@@ -467,6 +580,10 @@ export default function App() {
           onMove={(meta, to) => void moveScene(meta, to)}
           onCreate={createScene}
           onDelete={(meta) => void deleteScene(meta)}
+          onCreateChapter={createChapter}
+          onRenameChapter={(chapter, title) => void renameChapter(chapter, title)}
+          onMoveChapter={(chapter, to) => void moveChapter(chapter, to)}
+          onDeleteChapter={(chapter) => void deleteChapter(chapter)}
           onCreateAct={createAct}
           onRenameAct={(act, title) => void renameAct(act, title)}
           onMoveAct={(act, to) => void moveAct(act, to)}

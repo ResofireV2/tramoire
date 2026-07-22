@@ -53,7 +53,8 @@ launch, so this is a one-time step.
 The sample project is committed to this repository on purpose: editing it makes
 `git diff` the check.
 
-1. Open `sample/TestNovel.tramoire`. The binder fills with two acts.
+1. Open `sample/TestNovel.tramoire`. The binder fills with two acts, each
+   holding a chapter, each holding scenes.
 2. Click **Six hours out**. Prose loads in serif on the paper column and
    *angry about his neck* is italic — markdown parsed into marks correctly.
 3. Type a sentence. The status bar shows Saving… then Saved.
@@ -65,24 +66,26 @@ The sample project is committed to this repository on purpose: editing it makes
    Enter. `git status sample/` shows the markdown file renamed to match and
    `project.json` holding the new title and path. The scene's `id` is unchanged,
    because that is its identity and a filename is only a label.
-8. With a scene selected, hold Alt+↓ until it crosses into act two. It keeps
-   focus the whole way, so one held key walks it through the manuscript.
-   `git diff sample/` shows the scene object moved between acts and nothing
-   else — no scene file was touched, because ordering is not stored in one.
-9. Press **+** on an act header. A scene appears with its title selected and an
-   empty file behind it in `scenes/`. Press the **×** on a row (or Delete on a
-   selected scene), confirm, and the entry goes while the markdown moves to
+8. With a scene selected, hold Alt+↓ until it crosses into the next chapter and
+   on into act two. It keeps focus the whole way, so one held key walks it
+   through the manuscript. `git diff sample/` shows the scene object moved and
+   nothing else — no scene file was touched, because ordering is not stored in
+   one.
+9. Press **+** on a chapter header. A scene appears with its title selected and
+   an empty file behind it in `scenes/`. Press the **×** on a row (or Delete on
+   a selected scene), confirm, and the entry goes while the markdown moves to
    `trash/`.
 10. **Project → New project…**, give it a title, choose a location. A folder
     named after the title appears with a `project.json` and one empty scene,
     already open with its name selected. It opens like any other project,
     because that is literally what happens — `create_project` writes the folder
     and hands the path to the same `open_project` the picker uses.
-11. Double-click an act header to retitle it, Alt+↑/↓ to move the whole act and
-    its scenes, **+ New act** at the foot of the binder to add one. Press **×**
-    on an act that still holds scenes: the dialog offers to move them into the
-    neighbouring act or to send them to `trash/` with their files, because
-    which one you meant is not something the app can work out for you.
+11. Double-click any act or chapter header to retitle it, Alt+↑/↓ to move it
+    with everything inside, **+** on an act to add a chapter, **+ New act** at
+    the foot of the binder. Press **×** on one that still holds something: the
+    dialog offers to move its contents into the neighbour or to send every
+    scene file to `trash/`, because which one you meant is not something the
+    app can work out for you.
 12. `git checkout sample/ && git clean -fd sample/` to reset — the checkout
     restores what was tracked, the clean removes what was created or trashed.
 
@@ -108,7 +111,7 @@ src/
     autosave.ts     debounced writes with an explicit flush
     editor.ts       schema, smart typography, paste handling
     theme.ts        the two theme axes
-    binder.ts       where a scene lands when it moves
+    binder.ts       where a scene or chapter lands when it moves
     recent.ts       which projects were open lately
   components/       presentational only, no filesystem knowledge
   styles/
@@ -118,7 +121,7 @@ src/
 
 src-tauri/src/
   commands.rs       every command the frontend can call
-  model.rs          the shape of project.json — mirrors storage.ts
+  model.rs          the shape of project.json, and the shapes it used to have
   naming.rs         titles into filenames and folder names
   paths.rs          path containment, atomic writes, checkpoints
 
@@ -150,8 +153,20 @@ Scene files are pure markdown with no frontmatter — all metadata lives in
 `project.json`, which keeps the Rust side dependency-free. Adding frontmatter
 later is additive.
 
+The manifest nests acts, then chapters, then scenes, and every one of them is
+named by the person writing. Nothing is numbered: position in the array is the
+order, and ids say nothing about it, so reordering rewrites no id and no
+filename. `scenes/` stays flat regardless of how deep the tree gets — the
+structure is the manifest's business, not the folder's.
+
 `formatVersion` is checked on open. A project written by a newer build refuses
-to open rather than silently dropping fields it does not understand.
+to open rather than silently dropping fields it does not understand. An older
+one is converted on the way in — version 1 had no chapter level, so each of its
+scenes becomes a chapter of its own. That conversion is never written until
+something else changes the project, and that write takes a checkpoint like any
+other, so opening an old project in a new build cannot damage it on its own.
+Once it does save, older builds will refuse it, which is the version check
+doing its job in the other direction.
 
 ---
 
@@ -219,9 +234,10 @@ new one, never half of one.
 
 Each is additive. None require changing what is already here.
 
-1. **Dragging acts** — act headers as drag handles, so a whole act moves by
-   pointer as well as by Alt+↑/↓. Nested drop targets are a different problem
-   from the scene-sized ones already there, which is why it is not done yet.
+1. **Dragging acts and chapters** — their headers as drag handles, so a whole
+   act or chapter moves by pointer as well as by Alt+↑/↓. Nested drop targets
+   are a different problem from the scene-sized ones already there, which is
+   why it is not done yet.
 2. **Entities** — `entities/*.md` with frontmatter, one table with a `type`
    column, one link table. Characters, locations and items are the same noun.
 3. **Decorations** — the ProseMirror plugin that underlines entity names.
@@ -242,11 +258,11 @@ Each is additive. None require changing what is already here.
 - There is no prompt on quit if a save is still pending. Writes flush on window
   blur, on visibility change and before switching scenes, which covers
   everything short of a hard kill.
-- Acts move with Alt+↑/↓ but cannot be dragged. Scenes can be dragged; acts
-  cannot yet.
+- Acts and chapters move with Alt+↑/↓ but cannot be dragged. Scenes can be.
 - A project always has at least one act. Deleting the last one is refused,
-  because an act-less project has nowhere to put a scene and nothing in the
-  binder to hang the button on. New projects start with one for the same reason.
+  because an act-less project has nowhere to put a chapter and nothing in the
+  binder to hang the button on. New projects start with one act holding one
+  chapter holding one scene for the same reason.
 - The recent projects list is remembered, but not which scene was open in one.
   Reopening a project lands on the binder rather than where you left off.
 - Nothing empties `trash/`. That is deliberate, but it does mean a project

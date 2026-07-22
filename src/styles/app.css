@@ -137,6 +137,60 @@ button {
 .act-delete:focus { opacity: 1; }
 .act-delete:hover { background: var(--chrome-panel); color: var(--chrome-text); }
 
+/* ------------------------------------------------------------- chapters */
+
+.chapter {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px 7px 18px;
+  margin-top: 7px;
+}
+
+.chapter-title {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  font-size: 13.5px;
+  color: var(--chrome-text-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chapter-title:hover { color: var(--chrome-text); }
+
+.chapter-rename {
+  display: block;
+  width: 100%;
+  padding: 7px 12px;
+  margin-top: 7px;
+  border: 1px solid var(--chrome-accent);
+  border-radius: 8px;
+  background: var(--chrome-raised);
+  color: var(--chrome-text);
+  font-family: var(--sans);
+  font-size: 13.5px;
+}
+.chapter-rename:focus { outline: none; }
+
+.chapter-add,
+.chapter-delete {
+  padding: 1px 6px 3px;
+  border-radius: 6px;
+  font-size: 14px;
+  line-height: 1;
+  color: var(--chrome-text-3);
+}
+.chapter-delete { opacity: 0; }
+.chapter:hover .chapter-delete,
+.chapter-delete:focus { opacity: 1; }
+.chapter-add:hover,
+.chapter-delete:hover { background: var(--chrome-panel); color: var(--chrome-text); }
+
+/* Scenes sit under their chapter, so the indent has to come from here. */
+.chapter-group .scene { padding-left: 40px; }
+.chapter-group .scene-rename { padding-left: 39px; }
+
 .act-new {
   width: 100%;
   margin-top: 22px;

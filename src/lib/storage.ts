@@ -21,10 +21,16 @@ export type SceneMeta = {
   status: string;
 };
 
-export type Act = {
+export type Chapter = {
   id: string;
   title: string;
   scenes: SceneMeta[];
+};
+
+export type Act = {
+  id: string;
+  title: string;
+  chapters: Chapter[];
 };
 
 export type Project = {
@@ -102,10 +108,10 @@ export function renameScene(
 export function moveScene(
   projectPath: string,
   sceneId: string,
-  toActId: string,
+  toChapterId: string,
   toIndex: number
 ): Promise<Project> {
-  return invoke("move_scene", { projectPath, sceneId, toActId, toIndex });
+  return invoke("move_scene", { projectPath, sceneId, toChapterId, toIndex });
 }
 
 /** What `createScene` gives back. Mirrors `Created` in `model.rs`. */
@@ -114,14 +120,14 @@ export type Created = {
   scene: SceneMeta;
 };
 
-/** Add an empty scene to an act, at `toIndex` within it. */
+/** Add an empty scene to a chapter, at `toIndex` within it. */
 export function createScene(
   projectPath: string,
-  actId: string,
+  chapterId: string,
   title: string,
   toIndex: number
 ): Promise<Created> {
-  return invoke("create_scene", { projectPath, actId, title, toIndex });
+  return invoke("create_scene", { projectPath, chapterId, title, toIndex });
 }
 
 /**
@@ -150,23 +156,69 @@ export function moveAct(projectPath: string, actId: string, toIndex: number): Pr
   return invoke("move_act", { projectPath, actId, toIndex });
 }
 
-/** What becomes of the scenes an act still holds. Mirrors `Scenes` in Rust. */
-export type ActScenes = "move" | "trash";
+/** What becomes of what a container holds. Mirrors `Contents` in Rust. */
+export type Contents = "move" | "trash";
 
 /**
- * Delete an act, moving its scenes into the neighbouring act or sending their
- * files to `trash/`. The last act cannot be deleted — a project with no acts
- * has nowhere to put a scene.
+ * Delete an act, moving its chapters into the neighbouring act or sending
+ * every scene file inside it to `trash/`. The last act cannot be deleted — a
+ * project with no acts has nowhere to put a chapter.
  */
 export function deleteAct(
   projectPath: string,
   actId: string,
-  scenes: ActScenes
+  contents: Contents
 ): Promise<Project> {
-  return invoke("delete_act", { projectPath, actId, scenes });
+  return invoke("delete_act", { projectPath, actId, contents });
 }
 
-/** Flatten the act tree for anything that needs scenes in reading order. */
+/* -------------------------------------------------------------- chapters */
+
+export function createChapter(
+  projectPath: string,
+  actId: string,
+  title: string,
+  toIndex: number
+): Promise<Project> {
+  return invoke("create_chapter", { projectPath, actId, title, toIndex });
+}
+
+export function renameChapter(
+  projectPath: string,
+  chapterId: string,
+  title: string
+): Promise<Project> {
+  return invoke("rename_chapter", { projectPath, chapterId, title });
+}
+
+export function moveChapter(
+  projectPath: string,
+  chapterId: string,
+  toActId: string,
+  toIndex: number
+): Promise<Project> {
+  return invoke("move_chapter", { projectPath, chapterId, toActId, toIndex });
+}
+
+/**
+ * Delete a chapter, moving its scenes into the chapter before it in reading
+ * order or sending their files to `trash/`. Moving is impossible when it is
+ * the only chapter in the project.
+ */
+export function deleteChapter(
+  projectPath: string,
+  chapterId: string,
+  contents: Contents
+): Promise<Project> {
+  return invoke("delete_chapter", { projectPath, chapterId, contents });
+}
+
+/** Flatten the tree for anything that needs chapters in reading order. */
+export function allChapters(project: Project | null): Chapter[] {
+  return project?.acts.flatMap((act) => act.chapters) ?? [];
+}
+
+/** Flatten the tree for anything that needs scenes in reading order. */
 export function allScenes(project: Project | null): SceneMeta[] {
-  return project?.acts.flatMap((act) => act.scenes) ?? [];
+  return allChapters(project).flatMap((chapter) => chapter.scenes);
 }

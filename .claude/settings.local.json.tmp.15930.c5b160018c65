@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cargo test *)",
+      "Bash(npm run *)",
+      "Bash(npm test *)",
+      "Bash(cargo fmt *)",
+      "Bash(cargo clippy *)",
+      "Bash(python3 -c ' *)",
+      "Bash(grep -rn \"#[0-9a-fA-F]\\\\{3,8\\\\}\" src --include=\"*.css\" --include=\"*.tsx\")",
+      "Bash(git push *)",
+      "Bash(npx vitest *)",
+      "Bash(git add *)",
+      "Bash(git commit *)"
+    ]
+  }
+}

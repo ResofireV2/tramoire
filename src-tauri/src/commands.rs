@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
-use crate::model::{Act, Created, Project, SceneMeta, FORMAT_VERSION};
+use crate::model::{v1, Act, Chapter, Created, Project, SceneMeta, FORMAT_VERSION};
 use crate::naming::{folder_name, slugify};
 use crate::paths::{checkpoint, resolve, write_atomic};
 
@@ -28,9 +28,9 @@ pub fn open_project(path: String) -> Result<Project, String> {
 
 /// Make a new project folder under `parent_path` and return its path.
 ///
-/// It starts with one act and one empty scene rather than nothing at all: a
-/// project with no acts has nowhere to put the button that adds a scene, so an
-/// empty one would be a dead end.
+/// It starts with one act holding one chapter holding one empty scene, rather
+/// than nothing at all: every level of the binder hangs its add button off the
+/// level above, so an empty project would be a dead end.
 ///
 /// The caller opens the result like any other project, which is deliberate —
 /// creation and opening then agree by construction about what a valid project
@@ -65,7 +65,11 @@ pub fn create_project(parent_path: String, title: String) -> Result<String, Stri
         acts: vec![Act {
             id: "act-1".to_string(),
             title: "Act one".to_string(),
-            scenes: vec![scene.clone()],
+            chapters: vec![Chapter {
+                id: "ch-1".to_string(),
+                title: "Chapter one".to_string(),
+                scenes: vec![scene.clone()],
+            }],
         }],
     };
 
@@ -119,9 +123,13 @@ pub fn rename_scene(
     let title = clean_title(&title)?;
     let mut project = read_manifest(&project_path)?;
 
-    let (act, index) = locate(&project, &scene_id)?;
-    let old_title = project.acts[act].scenes[index].title.clone();
-    let old_file = project.acts[act].scenes[index].file.clone();
+    let (act, chapter, index) = locate(&project, &scene_id)?;
+    let old_title = project.acts[act].chapters[chapter].scenes[index]
+        .title
+        .clone();
+    let old_file = project.acts[act].chapters[chapter].scenes[index]
+        .file
+        .clone();
 
     // Nothing to write means nothing to check point. Retitling a scene to what
     // it already says should not consume the one backup slot.
@@ -140,7 +148,7 @@ pub fn rename_scene(
         None
     };
 
-    project.acts[act].scenes[index].title = title;
+    project.acts[act].chapters[chapter].scenes[index].title = title;
 
     // Unlike creating or deleting, a rename can break the entry-has-a-file
     // invariant whichever order it is done in. So the file moves first and is
@@ -155,7 +163,7 @@ pub fn rename_scene(
         // lock — is not worth failing the retitle over. The entry keeps
         // pointing at the file that is still there.
         if from.exists() && fs::rename(&from, &to).is_ok() {
-            project.acts[act].scenes[index].file = new_file;
+            project.acts[act].chapters[chapter].scenes[index].file = new_file;
             moved = Some((from, to));
         }
     }
@@ -184,33 +192,34 @@ pub fn rename_scene(
 pub fn move_scene(
     project_path: String,
     scene_id: String,
-    to_act_id: String,
+    to_chapter_id: String,
     to_index: usize,
 ) -> Result<Project, String> {
     let mut project = read_manifest(&project_path)?;
 
-    let (from_act, from_index) = locate(&project, &scene_id)?;
+    let (from_act, from_chapter, from_index) = locate(&project, &scene_id)?;
+    let (to_act, to_chapter) = locate_chapter(&project, &to_chapter_id)?;
 
-    let to_act = project
-        .acts
-        .iter()
-        .position(|act| act.id == to_act_id)
-        .ok_or_else(|| format!("no act {to_act_id} in this project"))?;
+    let scene = project.acts[from_act].chapters[from_chapter]
+        .scenes
+        .remove(from_index);
 
-    let scene = project.acts[from_act].scenes.remove(from_index);
-    let to_index = to_index.min(project.acts[to_act].scenes.len());
-    project.acts[to_act].scenes.insert(to_index, scene);
+    let to_index = to_index.min(project.acts[to_act].chapters[to_chapter].scenes.len());
+    project.acts[to_act].chapters[to_chapter]
+        .scenes
+        .insert(to_index, scene);
 
     // Dropping a scene back where it came from is a real gesture — a drag that
     // ends where it started — and it should cost nothing.
-    if to_act != from_act || to_index != from_index {
+    let same = (to_act, to_chapter, to_index) == (from_act, from_chapter, from_index);
+    if !same {
         write_manifest(&project_path, &project)?;
     }
 
     Ok(project)
 }
 
-/// Add an empty scene to an act.
+/// Add an empty scene to a chapter.
 ///
 /// The file is written before the manifest that names it. Both orders can fail
 /// halfway, and this is the harmless half: an entry pointing at a file that does
@@ -219,18 +228,14 @@ pub fn move_scene(
 #[tauri::command]
 pub fn create_scene(
     project_path: String,
-    act_id: String,
+    chapter_id: String,
     title: String,
     to_index: usize,
 ) -> Result<Created, String> {
     let title = clean_title(&title)?;
     let mut project = read_manifest(&project_path)?;
 
-    let act = project
-        .acts
-        .iter()
-        .position(|act| act.id == act_id)
-        .ok_or_else(|| format!("no act {act_id} in this project"))?;
+    let (act, chapter) = locate_chapter(&project, &chapter_id)?;
 
     let stem = unused_stem(&project_path, &project, &slugify(&title))?;
     let scene = SceneMeta {
@@ -243,8 +248,10 @@ pub fn create_scene(
     let file = resolve(&project_path, &scene.file)?;
     write_atomic(&file, "")?;
 
-    let to_index = to_index.min(project.acts[act].scenes.len());
-    project.acts[act].scenes.insert(to_index, scene.clone());
+    let to_index = to_index.min(project.acts[act].chapters[chapter].scenes.len());
+    project.acts[act].chapters[chapter]
+        .scenes
+        .insert(to_index, scene.clone());
 
     if let Err(e) = write_manifest(&project_path, &project) {
         // Leaving the file would burn its name: the next create would skip to
@@ -269,8 +276,8 @@ pub fn create_scene(
 pub fn delete_scene(project_path: String, scene_id: String) -> Result<Project, String> {
     let mut project = read_manifest(&project_path)?;
 
-    let (act, index) = locate(&project, &scene_id)?;
-    let scene = project.acts[act].scenes.remove(index);
+    let (act, chapter, index) = locate(&project, &scene_id)?;
+    let scene = project.acts[act].chapters[chapter].scenes.remove(index);
 
     write_manifest(&project_path, &project)?;
     trash(&project_path, &scene.file)?;
@@ -313,7 +320,7 @@ pub fn create_act(project_path: String, title: String, to_index: usize) -> Resul
     let act = Act {
         id: unused_act_id(&project),
         title,
-        scenes: Vec::new(),
+        chapters: Vec::new(),
     };
 
     let to_index = to_index.min(project.acts.len());
@@ -363,22 +370,26 @@ pub fn move_act(project_path: String, act_id: String, to_index: usize) -> Result
     Ok(project)
 }
 
-/// What to do with the scenes an act still holds when it is deleted.
+/// What to do with whatever a container still holds when it is deleted.
 #[derive(Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
-pub enum Scenes {
-    /// Into the act above, or the one below if this was the first.
+pub enum Contents {
+    /// Into the neighbour above, or the one below if this was the first.
     Move,
-    /// Every file to `trash/`, like deleting the scenes one by one.
+    /// Every scene file to `trash/`, like deleting them one by one.
     Trash,
 }
 
-/// Delete an act, moving or trashing whatever is inside it.
+/// Delete an act, moving or trashing the chapters inside it.
 ///
-/// The last act cannot go: a project with no acts has nowhere to put a scene,
+/// The last act cannot go: a project with no acts has nowhere to put a chapter,
 /// and nothing in the binder to hang the button on.
 #[tauri::command]
-pub fn delete_act(project_path: String, act_id: String, scenes: Scenes) -> Result<Project, String> {
+pub fn delete_act(
+    project_path: String,
+    act_id: String,
+    contents: Contents,
+) -> Result<Project, String> {
     let mut project = read_manifest(&project_path)?;
 
     if project.acts.len() < 2 {
@@ -388,14 +399,14 @@ pub fn delete_act(project_path: String, act_id: String, scenes: Scenes) -> Resul
     let index = locate_act(&project, &act_id)?;
     let act = project.acts.remove(index);
 
-    if scenes == Scenes::Move {
+    if contents == Contents::Move {
         // Above if there is an above, otherwise the front of what is now first,
-        // because these scenes came before it in reading order.
+        // because these chapters came before it in reading order.
         match index.checked_sub(1) {
-            Some(previous) => project.acts[previous].scenes.extend(act.scenes),
+            Some(previous) => project.acts[previous].chapters.extend(act.chapters),
             None => {
-                for (at, scene) in act.scenes.into_iter().enumerate() {
-                    project.acts[0].scenes.insert(at, scene);
+                for (at, chapter) in act.chapters.into_iter().enumerate() {
+                    project.acts[0].chapters.insert(at, chapter);
                 }
             }
         }
@@ -408,11 +419,179 @@ pub fn delete_act(project_path: String, act_id: String, scenes: Scenes) -> Resul
     // so a failure halfway leaves orphans rather than entries pointing nowhere.
     write_manifest(&project_path, &project)?;
 
-    for scene in &act.scenes {
+    for scene in act
+        .chapters
+        .iter()
+        .flat_map(|chapter| chapter.scenes.iter())
+    {
         trash(&project_path, &scene.file)?;
     }
 
     Ok(project)
+}
+
+/* ------------------------------------------------------------- chapters */
+
+/// Add a chapter to an act.
+#[tauri::command]
+pub fn create_chapter(
+    project_path: String,
+    act_id: String,
+    title: String,
+    to_index: usize,
+) -> Result<Project, String> {
+    let title = clean_title(&title)?;
+    let mut project = read_manifest(&project_path)?;
+
+    let act = locate_act(&project, &act_id)?;
+
+    let chapter = Chapter {
+        id: unused_chapter_id(&project),
+        title,
+        scenes: Vec::new(),
+    };
+
+    let to_index = to_index.min(project.acts[act].chapters.len());
+    project.acts[act].chapters.insert(to_index, chapter);
+
+    write_manifest(&project_path, &project)?;
+    Ok(project)
+}
+
+/// Retitle a chapter. Like an act and unlike a scene, nothing on disk is named
+/// after it, so this is only ever a change of label.
+#[tauri::command]
+pub fn rename_chapter(
+    project_path: String,
+    chapter_id: String,
+    title: String,
+) -> Result<Project, String> {
+    let title = clean_title(&title)?;
+    let mut project = read_manifest(&project_path)?;
+
+    let (act, chapter) = locate_chapter(&project, &chapter_id)?;
+
+    if project.acts[act].chapters[chapter].title == title {
+        return Ok(project);
+    }
+
+    project.acts[act].chapters[chapter].title = title;
+
+    write_manifest(&project_path, &project)?;
+    Ok(project)
+}
+
+/// Move a chapter, and its scenes, to a position in an act.
+///
+/// `to_index` is a position after the chapter has been lifted out, the same
+/// convention `move_scene` uses one level down.
+#[tauri::command]
+pub fn move_chapter(
+    project_path: String,
+    chapter_id: String,
+    to_act_id: String,
+    to_index: usize,
+) -> Result<Project, String> {
+    let mut project = read_manifest(&project_path)?;
+
+    let (from_act, from_index) = locate_chapter(&project, &chapter_id)?;
+    let to_act = locate_act(&project, &to_act_id)?;
+
+    let chapter = project.acts[from_act].chapters.remove(from_index);
+    let to_index = to_index.min(project.acts[to_act].chapters.len());
+    project.acts[to_act].chapters.insert(to_index, chapter);
+
+    if (to_act, to_index) != (from_act, from_index) {
+        write_manifest(&project_path, &project)?;
+    }
+
+    Ok(project)
+}
+
+/// Delete a chapter, moving or trashing the scenes inside it.
+///
+/// Moving means the chapter immediately before it in reading order, crossing
+/// into the previous act if it was the first of its own, or the one after when
+/// it was the very first chapter in the book. With no other chapter anywhere,
+/// there is nowhere to move to and only trashing is possible.
+#[tauri::command]
+pub fn delete_chapter(
+    project_path: String,
+    chapter_id: String,
+    contents: Contents,
+) -> Result<Project, String> {
+    let mut project = read_manifest(&project_path)?;
+
+    let (act, index) = locate_chapter(&project, &chapter_id)?;
+
+    // Worked out before the removal, while the neighbours are still where the
+    // caller saw them.
+    let destination = match contents {
+        Contents::Move => Some(neighbour_chapter(&project, act, index).ok_or_else(|| {
+            "this is the only chapter in the project — its scenes have nowhere to go".to_string()
+        })?),
+        Contents::Trash => None,
+    };
+
+    let chapter = project.acts[act].chapters.remove(index);
+
+    if let Some((into_act, into_chapter, at_front)) = destination {
+        // Indices were taken before the removal, so anything after the hole in
+        // the same act has shifted up by one.
+        let into_chapter = if into_act == act && into_chapter > index {
+            into_chapter - 1
+        } else {
+            into_chapter
+        };
+
+        let scenes = &mut project.acts[into_act].chapters[into_chapter].scenes;
+
+        if at_front {
+            for (at, scene) in chapter.scenes.into_iter().enumerate() {
+                scenes.insert(at, scene);
+            }
+        } else {
+            scenes.extend(chapter.scenes);
+        }
+
+        write_manifest(&project_path, &project)?;
+        return Ok(project);
+    }
+
+    write_manifest(&project_path, &project)?;
+
+    for scene in &chapter.scenes {
+        trash(&project_path, &scene.file)?;
+    }
+
+    Ok(project)
+}
+
+/// The chapter a deleted one's scenes should join, and whether they go to its
+/// front. `(act, chapter, at_front)`, in indices from before the removal.
+fn neighbour_chapter(project: &Project, act: usize, index: usize) -> Option<(usize, usize, bool)> {
+    // The chapter above, in this act or the last one of an earlier act.
+    if index > 0 {
+        return Some((act, index - 1, false));
+    }
+    if let Some((a, earlier)) = project.acts[..act]
+        .iter()
+        .enumerate()
+        .rev()
+        .find(|(_, act)| !act.chapters.is_empty())
+    {
+        return Some((a, earlier.chapters.len() - 1, false));
+    }
+
+    // Nothing above, so the one below, and these scenes go in front of its own.
+    if index + 1 < project.acts[act].chapters.len() {
+        return Some((act, index + 1, true));
+    }
+    project.acts[act + 1..]
+        .iter()
+        .enumerate()
+        .find(|(_, act)| !act.chapters.is_empty())
+        .map(|(offset, _)| (act + 1 + offset, 0, true))
 }
 
 /* --------------------------------------------------------------- naming */
@@ -425,7 +604,8 @@ fn locate_act(project: &Project, act_id: &str) -> Result<usize, String> {
         .ok_or_else(|| format!("no act {act_id} in this project"))
 }
 
-/// An act id nothing is using. Ids are never shown, so a counter is enough.
+/// An act id nothing is using. Ids are never shown, so a counter is enough —
+/// and they say nothing about order, which is what the array is for.
 fn unused_act_id(project: &Project) -> String {
     (1..)
         .map(|n| format!("act-{n}"))
@@ -433,17 +613,44 @@ fn unused_act_id(project: &Project) -> String {
         .expect("an unused id exists in an unbounded sequence")
 }
 
-/// Which act and position a scene sits at.
-fn locate(project: &Project, scene_id: &str) -> Result<(usize, usize), String> {
+fn unused_chapter_id(project: &Project) -> String {
+    (1..)
+        .map(|n| format!("ch-{n}"))
+        .find(|id| !chapters(project).any(|chapter| &chapter.id == id))
+        .expect("an unused id exists in an unbounded sequence")
+}
+
+fn chapters(project: &Project) -> impl Iterator<Item = &Chapter> {
+    project.acts.iter().flat_map(|act| act.chapters.iter())
+}
+
+fn locate_chapter(project: &Project, chapter_id: &str) -> Result<(usize, usize), String> {
     project
         .acts
         .iter()
         .enumerate()
         .find_map(|(act, a)| {
-            a.scenes
+            a.chapters
                 .iter()
-                .position(|s| s.id == scene_id)
-                .map(|i| (act, i))
+                .position(|chapter| chapter.id == chapter_id)
+                .map(|index| (act, index))
+        })
+        .ok_or_else(|| format!("no chapter {chapter_id} in this project"))
+}
+
+/// Which act, chapter and position a scene sits at.
+fn locate(project: &Project, scene_id: &str) -> Result<(usize, usize, usize), String> {
+    project
+        .acts
+        .iter()
+        .enumerate()
+        .find_map(|(act, a)| {
+            a.chapters.iter().enumerate().find_map(|(chapter, c)| {
+                c.scenes
+                    .iter()
+                    .position(|s| s.id == scene_id)
+                    .map(|index| (act, chapter, index))
+            })
         })
         .ok_or_else(|| format!("no scene {scene_id} in this project"))
 }
@@ -488,9 +695,7 @@ fn unused_stem(project_path: &str, project: &Project, base: &str) -> Result<Stri
         let id = format!("sc-{stem}");
 
         let taken = project
-            .acts
-            .iter()
-            .flat_map(|act| act.scenes.iter())
+            .scenes()
             .any(|scene| scene.file == file || scene.id == id);
 
         if !taken && !resolve(project_path, &file)?.exists() {
@@ -535,20 +740,33 @@ fn read_manifest(project_path: &str) -> Result<Project, String> {
         format!("couldn't read {MANIFEST} — is {project_path} a Tramoire project folder? ({e})")
     })?;
 
-    let project: Project =
+    let value: serde_json::Value =
         serde_json::from_str(&raw).map_err(|e| format!("{MANIFEST} is malformed: {e}"))?;
+
+    let version = value
+        .get("formatVersion")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
 
     // Checked on every read, not just on open: the folder may have been
     // upgraded by a newer build on another device while this window was open,
     // and writing to it would drop whatever that version added.
-    if project.format_version > FORMAT_VERSION {
+    if version > u64::from(FORMAT_VERSION) {
         return Err(format!(
-            "this project was made by a newer version of Tramoire (format {} vs {})",
-            project.format_version, FORMAT_VERSION
+            "this project was made by a newer version of Tramoire (format {version} vs {FORMAT_VERSION})"
         ));
     }
 
-    Ok(project)
+    // Converted on the way in, never on disk. Nothing is rewritten until the
+    // next real change, and that write takes a checkpoint like any other — so
+    // opening an old project in a new build cannot damage it on its own.
+    if version < 2 {
+        let old: v1::Project =
+            serde_json::from_value(value).map_err(|e| format!("{MANIFEST} is malformed: {e}"))?;
+        return Ok(old.into());
+    }
+
+    serde_json::from_value(value).map_err(|e| format!("{MANIFEST} is malformed: {e}"))
 }
 
 fn write_manifest(project_path: &str, project: &Project) -> Result<(), String> {
@@ -586,23 +804,74 @@ mod tests {
     use std::sync::atomic::{AtomicU32, Ordering};
 
     const SAMPLE: &str = r#"{
-  "formatVersion": 1,
+  "formatVersion": 2,
   "title": "The county line",
   "acts": [
     {
       "id": "act-1",
       "title": "Act one",
-      "scenes": [
-        { "id": "sc-one", "title": "Six hours out", "file": "scenes/one.md", "status": "draft" },
-        { "id": "sc-two", "title": "The Sundowner", "file": "scenes/two.md", "status": "" }
+      "chapters": [
+        {
+          "id": "ch-1",
+          "title": "Chapter one",
+          "scenes": [
+            { "id": "sc-one", "title": "Six hours out", "file": "scenes/one.md", "status": "draft" },
+            { "id": "sc-two", "title": "The Sundowner", "file": "scenes/two.md", "status": "" }
+          ]
+        }
       ]
     }
   ]
 }
 "#;
 
-    /// Two acts, because the interesting moves are the ones that cross.
+    /// Two acts and three chapters, because the interesting moves are the ones
+    /// that cross a boundary of one kind or the other.
     const TWO_ACTS: &str = r#"{
+  "formatVersion": 2,
+  "title": "The county line",
+  "acts": [
+    {
+      "id": "act-1",
+      "title": "Act one",
+      "chapters": [
+        {
+          "id": "ch-1",
+          "title": "Chapter one",
+          "scenes": [
+            { "id": "sc-one", "title": "One", "file": "scenes/one.md", "status": "" },
+            { "id": "sc-two", "title": "Two", "file": "scenes/two.md", "status": "" }
+          ]
+        },
+        {
+          "id": "ch-2",
+          "title": "Chapter two",
+          "scenes": [
+            { "id": "sc-three", "title": "Three", "file": "scenes/three.md", "status": "" }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "act-2",
+      "title": "Act two",
+      "chapters": [
+        {
+          "id": "ch-3",
+          "title": "Chapter three",
+          "scenes": [
+            { "id": "sc-four", "title": "Four", "file": "scenes/four.md", "status": "" }
+          ]
+        }
+      ]
+    }
+  ]
+}
+"#;
+
+    /// The shape version 1 wrote, kept as a fixture so the reader that copes
+    /// with it stays honest.
+    const VERSION_ONE: &str = r#"{
   "formatVersion": 1,
   "title": "The county line",
   "acts": [
@@ -610,15 +879,15 @@ mod tests {
       "id": "act-1",
       "title": "Act one",
       "scenes": [
-        { "id": "sc-one", "title": "One", "file": "scenes/one.md", "status": "" },
-        { "id": "sc-two", "title": "Two", "file": "scenes/two.md", "status": "" }
+        { "id": "sc-one", "title": "Six hours out", "file": "scenes/one.md", "status": "Chapter 9" },
+        { "id": "sc-two", "title": "The Sundowner", "file": "scenes/two.md", "status": "" }
       ]
     },
     {
       "id": "act-2",
       "title": "Act two",
       "scenes": [
-        { "id": "sc-three", "title": "Three", "file": "scenes/three.md", "status": "" }
+        { "id": "sc-three", "title": "What Nadia knew", "file": "scenes/three.md", "status": "" }
       ]
     }
   ]
@@ -644,14 +913,80 @@ mod tests {
         dir.to_str().unwrap().to_string()
     }
 
-    fn titles(project: &Project) -> Vec<&str> {
+    /// Acts, each holding chapters, each holding scene ids — the whole tree,
+    /// which is what the structural commands are allowed to rearrange.
+    fn shape(project: &Project) -> Vec<Vec<Vec<&str>>> {
         project
             .acts
             .iter()
-            .flat_map(|act| act.scenes.iter())
-            .map(|scene| scene.title.as_str())
+            .map(|act| {
+                act.chapters
+                    .iter()
+                    .map(|chapter| chapter.scenes.iter().map(|s| s.id.as_str()).collect())
+                    .collect()
+            })
             .collect()
     }
+
+    /// Every scene in reading order, for the cases where nesting is not the point.
+    fn order(project: &Project) -> Vec<&str> {
+        project.scenes().map(|s| s.id.as_str()).collect()
+    }
+
+    fn titles(project: &Project) -> Vec<&str> {
+        project.scenes().map(|s| s.title.as_str()).collect()
+    }
+
+    /* ------------------------------------------------------------ version */
+
+    #[test]
+    fn a_version_one_project_becomes_one_chapter_per_scene() {
+        let dir = project_with(VERSION_ONE);
+        let p = open_project(path(&dir)).unwrap();
+
+        assert_eq!(p.format_version, 2);
+        assert_eq!(
+            shape(&p),
+            [vec![vec!["sc-one"], vec!["sc-two"]], vec![vec!["sc-three"]]]
+        );
+
+        // Numbered across the book, not per act.
+        assert_eq!(p.acts[0].chapters[0].title, "Chapter 1");
+        assert_eq!(p.acts[1].chapters[0].title, "Chapter 3");
+
+        // Reading it changed nothing on disk.
+        assert_eq!(fs::read_to_string(dir.join(MANIFEST)).unwrap(), VERSION_ONE);
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_version_one_project_upgrades_on_the_first_change() {
+        let dir = project_with(VERSION_ONE);
+        rename_scene(path(&dir), "sc-one".into(), "Renamed".into()).unwrap();
+
+        let raw = fs::read_to_string(dir.join(MANIFEST)).unwrap();
+        assert!(raw.contains("\"formatVersion\": 2"));
+        assert!(raw.contains("chapters"));
+
+        // And the version 1 manifest is still there to go back to.
+        let backup = fs::read_to_string(dir.join(".project.json.bak")).unwrap();
+        assert_eq!(backup, VERSION_ONE);
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn rename_refuses_a_newer_format() {
+        let dir = project_with(&SAMPLE.replace("\"formatVersion\": 2", "\"formatVersion\": 99"));
+
+        assert!(rename_scene(path(&dir), "sc-one".into(), "Renamed".into()).is_err());
+        assert!(!dir.join(".project.json.bak").exists());
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /* ------------------------------------------------------------- scenes */
 
     #[test]
     fn rename_writes_through_to_disk() {
@@ -677,8 +1012,9 @@ mod tests {
         fs::write(dir.join("scenes/one.md"), "the prose").unwrap();
 
         let p = rename_scene(path(&dir), "sc-one".into(), "Six hours out".into()).unwrap();
+        let scene = &p.acts[0].chapters[0].scenes[0];
 
-        assert_eq!(p.acts[0].scenes[0].file, "scenes/six-hours-out.md");
+        assert_eq!(scene.file, "scenes/six-hours-out.md");
         assert_eq!(
             fs::read_to_string(dir.join("scenes/six-hours-out.md")).unwrap(),
             "the prose"
@@ -686,7 +1022,7 @@ mod tests {
         assert!(!dir.join("scenes/one.md").exists());
 
         // The id is identity and never moves with the label.
-        assert_eq!(p.acts[0].scenes[0].id, "sc-one");
+        assert_eq!(scene.id, "sc-one");
 
         fs::remove_dir_all(&dir).unwrap();
     }
@@ -699,7 +1035,10 @@ mod tests {
 
         let p = rename_scene(path(&dir), "sc-one".into(), "Six hours out".into()).unwrap();
 
-        assert_eq!(p.acts[0].scenes[0].file, "scenes/ch09-six-hours.md");
+        assert_eq!(
+            p.acts[0].chapters[0].scenes[0].file,
+            "scenes/ch09-six-hours.md"
+        );
         assert!(dir.join("scenes/ch09-six-hours.md").exists());
 
         fs::remove_dir_all(&dir).unwrap();
@@ -715,7 +1054,7 @@ mod tests {
         // "Two" already owns scenes/two.md, so this has to land beside it.
         let p = rename_scene(path(&dir), "sc-one".into(), "Two".into()).unwrap();
 
-        assert_eq!(p.acts[0].scenes[0].file, "scenes/two-2.md");
+        assert_eq!(p.acts[0].chapters[0].scenes[0].file, "scenes/two-2.md");
         assert_eq!(
             fs::read_to_string(dir.join("scenes/two.md")).unwrap(),
             "the second"
@@ -735,9 +1074,10 @@ mod tests {
         fs::write(dir.join("scenes/one.md"), "the prose").unwrap();
 
         let p = rename_scene(path(&dir), "sc-one".into(), "  One!  ".into()).unwrap();
+        let scene = &p.acts[0].chapters[0].scenes[0];
 
-        assert_eq!(p.acts[0].scenes[0].title, "One!");
-        assert_eq!(p.acts[0].scenes[0].file, "scenes/one.md");
+        assert_eq!(scene.title, "One!");
+        assert_eq!(scene.file, "scenes/one.md");
 
         fs::remove_dir_all(&dir).unwrap();
     }
@@ -748,9 +1088,10 @@ mod tests {
 
         // Nothing on disk to move. The retitle is still what was asked for.
         let p = rename_scene(path(&dir), "sc-one".into(), "Six hours out".into()).unwrap();
+        let scene = &p.acts[0].chapters[0].scenes[0];
 
-        assert_eq!(p.acts[0].scenes[0].title, "Six hours out");
-        assert_eq!(p.acts[0].scenes[0].file, "scenes/one.md");
+        assert_eq!(scene.title, "Six hours out");
+        assert_eq!(scene.file, "scenes/one.md");
 
         fs::remove_dir_all(&dir).unwrap();
     }
@@ -761,10 +1102,11 @@ mod tests {
         rename_scene(path(&dir), "sc-two".into(), "The Sundowner Motel".into()).unwrap();
 
         let on_disk = read_manifest(&path(&dir)).unwrap();
-        let scene = &on_disk.acts[0].scenes[1];
+        let scene = &on_disk.acts[0].chapters[0].scenes[1];
+
         assert_eq!(on_disk.title, "The county line");
-        assert_eq!(on_disk.format_version, 1);
-        assert_eq!(scene.file, "scenes/two.md");
+        assert_eq!(on_disk.format_version, 2);
+        assert_eq!(on_disk.acts[0].chapters[0].title, "Chapter one");
         assert_eq!(scene.id, "sc-two");
 
         fs::remove_dir_all(&dir).unwrap();
@@ -808,62 +1150,59 @@ mod tests {
         fs::remove_dir_all(&dir).unwrap();
     }
 
-    /// Scene ids per act, which is the whole of what a move is allowed to change.
-    fn shape(project: &Project) -> Vec<Vec<&str>> {
-        project
-            .acts
-            .iter()
-            .map(|act| act.scenes.iter().map(|s| s.id.as_str()).collect())
-            .collect()
-    }
-
     #[test]
-    fn move_down_within_an_act() {
+    fn move_within_a_chapter() {
         let dir = project_with(TWO_ACTS);
 
         // The off-by-one case: sc-one is at 0, and landing after sc-two means
         // targeting 1, not 2, because the removal shifts sc-two up first.
-        let p = move_scene(path(&dir), "sc-one".into(), "act-1".into(), 1).unwrap();
+        let p = move_scene(path(&dir), "sc-one".into(), "ch-1".into(), 1).unwrap();
+        assert_eq!(order(&p), ["sc-two", "sc-one", "sc-three", "sc-four"]);
 
-        assert_eq!(shape(&p), [vec!["sc-two", "sc-one"], vec!["sc-three"]]);
-        assert_eq!(shape(&read_manifest(&path(&dir)).unwrap()), shape(&p));
-
-        fs::remove_dir_all(&dir).unwrap();
-    }
-
-    #[test]
-    fn move_up_within_an_act() {
-        let dir = project_with(TWO_ACTS);
-        let p = move_scene(path(&dir), "sc-two".into(), "act-1".into(), 0).unwrap();
-
-        assert_eq!(shape(&p), [vec!["sc-two", "sc-one"], vec!["sc-three"]]);
+        let p = move_scene(path(&dir), "sc-one".into(), "ch-1".into(), 0).unwrap();
+        assert_eq!(order(&p), ["sc-one", "sc-two", "sc-three", "sc-four"]);
 
         fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
-    fn move_across_an_act_boundary() {
+    fn move_across_a_chapter_and_an_act() {
         let dir = project_with(TWO_ACTS);
 
-        // Down off the end of act one is the top of act two.
-        let p = move_scene(path(&dir), "sc-two".into(), "act-2".into(), 0).unwrap();
-        assert_eq!(shape(&p), [vec!["sc-one"], vec!["sc-two", "sc-three"]]);
+        // Into the chapter next door, still inside act one.
+        let p = move_scene(path(&dir), "sc-two".into(), "ch-2".into(), 0).unwrap();
+        assert_eq!(
+            shape(&p),
+            [
+                vec![vec!["sc-one"], vec!["sc-two", "sc-three"]],
+                vec![vec!["sc-four"]]
+            ]
+        );
 
-        // And back up off the top of act two is the end of act one.
-        let p = move_scene(path(&dir), "sc-two".into(), "act-1".into(), 1).unwrap();
-        assert_eq!(shape(&p), [vec!["sc-one", "sc-two"], vec!["sc-three"]]);
+        // And on into a chapter of the next act.
+        let p = move_scene(path(&dir), "sc-two".into(), "ch-3".into(), 1).unwrap();
+        assert_eq!(
+            shape(&p),
+            [
+                vec![vec!["sc-one"], vec!["sc-three"]],
+                vec![vec!["sc-four", "sc-two"]]
+            ]
+        );
 
         fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
-    fn move_can_empty_an_act() {
+    fn move_can_empty_a_chapter() {
         let dir = project_with(TWO_ACTS);
-        let p = move_scene(path(&dir), "sc-three".into(), "act-1".into(), 2).unwrap();
+        let p = move_scene(path(&dir), "sc-three".into(), "ch-1".into(), 2).unwrap();
 
         assert_eq!(
             shape(&p),
-            [vec!["sc-one", "sc-two", "sc-three"], Vec::new()]
+            [
+                vec![vec!["sc-one", "sc-two", "sc-three"], Vec::new()],
+                vec![vec!["sc-four"]]
+            ]
         );
 
         fs::remove_dir_all(&dir).unwrap();
@@ -875,9 +1214,15 @@ mod tests {
 
         // What a frontend working from a stale copy would send. The scene ends
         // up last rather than the move being lost.
-        let p = move_scene(path(&dir), "sc-one".into(), "act-2".into(), 99).unwrap();
+        let p = move_scene(path(&dir), "sc-one".into(), "ch-3".into(), 99).unwrap();
 
-        assert_eq!(shape(&p), [vec!["sc-two"], vec!["sc-three", "sc-one"]]);
+        assert_eq!(
+            shape(&p),
+            [
+                vec![vec!["sc-two"], vec!["sc-three"]],
+                vec![vec!["sc-four", "sc-one"]]
+            ]
+        );
 
         fs::remove_dir_all(&dir).unwrap();
     }
@@ -885,7 +1230,7 @@ mod tests {
     #[test]
     fn moving_a_scene_nowhere_writes_nothing() {
         let dir = project_with(TWO_ACTS);
-        move_scene(path(&dir), "sc-one".into(), "act-1".into(), 0).unwrap();
+        move_scene(path(&dir), "sc-one".into(), "ch-1".into(), 0).unwrap();
 
         assert!(!dir.join(".project.json.bak").exists());
 
@@ -897,64 +1242,12 @@ mod tests {
         let dir = project_with(TWO_ACTS);
         let p = path(&dir);
 
-        assert!(move_scene(p.clone(), "sc-nope".into(), "act-1".into(), 0).is_err());
-        assert!(move_scene(p.clone(), "sc-one".into(), "act-nope".into(), 0).is_err());
+        assert!(move_scene(p.clone(), "sc-nope".into(), "ch-1".into(), 0).is_err());
+        assert!(move_scene(p.clone(), "sc-one".into(), "ch-nope".into(), 0).is_err());
 
-        // The unknown-act path removes the scene before it discovers the act is
-        // not there. Nothing may reach the file.
+        // The unknown-chapter path locates before it removes. Nothing may reach
+        // the file.
         assert_eq!(fs::read_to_string(dir.join(MANIFEST)).unwrap(), TWO_ACTS);
-
-        fs::remove_dir_all(&dir).unwrap();
-    }
-
-    #[test]
-    fn a_new_project_opens_like_any_other() {
-        let dir = project_with(TWO_ACTS);
-        let parent = dir.join("somewhere");
-        fs::create_dir_all(&parent).unwrap();
-
-        let made = create_project(path(&parent), "The county line".into()).unwrap();
-
-        // The strongest thing to assert: whatever create wrote, open accepts.
-        let project = open_project(made.clone()).unwrap();
-        assert!(made.ends_with("The county line.tramoire"));
-        assert_eq!(project.title, "The county line");
-        assert_eq!(shape(&project), [vec!["sc-untitled-scene"]]);
-
-        // And the scene it advertises actually exists.
-        let scene = &project.acts[0].scenes[0];
-        assert_eq!(
-            fs::read_to_string(Path::new(&made).join(&scene.file)).unwrap(),
-            ""
-        );
-
-        fs::remove_dir_all(&dir).unwrap();
-    }
-
-    #[test]
-    fn a_new_project_refuses_to_land_on_an_existing_folder() {
-        let dir = project_with(TWO_ACTS);
-        let parent = dir.join("somewhere");
-        fs::create_dir_all(parent.join("Taken.tramoire")).unwrap();
-
-        let err = create_project(path(&parent), "Taken".into()).unwrap_err();
-        assert!(err.contains("already"));
-
-        // Refusing has to mean untouched, not merged into.
-        assert!(!parent.join("Taken.tramoire").join(MANIFEST).exists());
-
-        fs::remove_dir_all(&dir).unwrap();
-    }
-
-    #[test]
-    fn a_new_project_refuses_an_unusable_title() {
-        let dir = project_with(TWO_ACTS);
-        let parent = dir.join("somewhere");
-        fs::create_dir_all(&parent).unwrap();
-
-        assert!(create_project(path(&parent), "   ".into()).is_err());
-        assert!(create_project(path(&parent), "???".into()).is_err());
-        assert!(create_project(path(&parent), "NUL".into()).is_err());
 
         fs::remove_dir_all(&dir).unwrap();
     }
@@ -962,21 +1255,23 @@ mod tests {
     #[test]
     fn create_writes_a_file_and_an_entry() {
         let dir = project_with(TWO_ACTS);
-        let made = create_scene(path(&dir), "act-2".into(), "What Nadia knew".into(), 0).unwrap();
+        let made = create_scene(path(&dir), "ch-3".into(), "What Nadia knew".into(), 0).unwrap();
 
         assert_eq!(made.scene.id, "sc-what-nadia-knew");
         assert_eq!(made.scene.file, "scenes/what-nadia-knew.md");
         assert_eq!(
             shape(&made.project),
             [
-                vec!["sc-one", "sc-two"],
-                vec!["sc-what-nadia-knew", "sc-three"]
+                vec![vec!["sc-one", "sc-two"], vec!["sc-three"]],
+                vec![vec!["sc-what-nadia-knew", "sc-four"]]
             ]
         );
 
         // The invariant: an entry in the manifest always has a file behind it.
-        let file = dir.join("scenes/what-nadia-knew.md");
-        assert_eq!(fs::read_to_string(&file).unwrap(), "");
+        assert_eq!(
+            fs::read_to_string(dir.join("scenes/what-nadia-knew.md")).unwrap(),
+            ""
+        );
 
         fs::remove_dir_all(&dir).unwrap();
     }
@@ -986,9 +1281,11 @@ mod tests {
         let dir = project_with(TWO_ACTS);
         let p = path(&dir);
 
-        let first = create_scene(p.clone(), "act-1".into(), "The drive".into(), 0).unwrap();
-        let second = create_scene(p.clone(), "act-1".into(), "The drive".into(), 0).unwrap();
+        let first = create_scene(p.clone(), "ch-1".into(), "The drive".into(), 0).unwrap();
+        let second = create_scene(p.clone(), "ch-2".into(), "The drive".into(), 0).unwrap();
 
+        // Different chapters, same title — the folder is flat, so the second
+        // still has to find its own name.
         assert_eq!(first.scene.file, "scenes/the-drive.md");
         assert_eq!(second.scene.file, "scenes/the-drive-2.md");
         assert_ne!(first.scene.id, second.scene.id);
@@ -1002,7 +1299,7 @@ mod tests {
         fs::create_dir_all(dir.join(SCENES)).unwrap();
         fs::write(dir.join("scenes/orphan.md"), "prose from a deleted entry").unwrap();
 
-        let made = create_scene(path(&dir), "act-1".into(), "Orphan".into(), 0).unwrap();
+        let made = create_scene(path(&dir), "ch-1".into(), "Orphan".into(), 0).unwrap();
 
         // Adopting the orphan's contents would be the worst possible outcome.
         assert_eq!(made.scene.file, "scenes/orphan-2.md");
@@ -1022,7 +1319,7 @@ mod tests {
 
         let p = delete_scene(path(&dir), "sc-two".into()).unwrap();
 
-        assert_eq!(shape(&p), [vec!["sc-one"], vec!["sc-three"]]);
+        assert_eq!(order(&p), ["sc-one", "sc-three", "sc-four"]);
         assert!(!dir.join("scenes/two.md").exists());
         assert_eq!(
             fs::read_to_string(dir.join("trash/two.md")).unwrap(),
@@ -1060,8 +1357,7 @@ mod tests {
 
         // No scenes/ directory at all — the entry should still leave the binder.
         let p = delete_scene(path(&dir), "sc-two".into()).unwrap();
-
-        assert_eq!(shape(&p), [vec!["sc-one"], vec!["sc-three"]]);
+        assert_eq!(order(&p), ["sc-one", "sc-three", "sc-four"]);
 
         fs::remove_dir_all(&dir).unwrap();
     }
@@ -1071,8 +1367,8 @@ mod tests {
         let dir = project_with(TWO_ACTS);
         let p = path(&dir);
 
-        assert!(create_scene(p.clone(), "act-nope".into(), "A scene".into(), 0).is_err());
-        assert!(create_scene(p.clone(), "act-1".into(), "  ".into(), 0).is_err());
+        assert!(create_scene(p.clone(), "ch-nope".into(), "A scene".into(), 0).is_err());
+        assert!(create_scene(p.clone(), "ch-1".into(), "  ".into(), 0).is_err());
         assert!(delete_scene(p.clone(), "sc-nope".into()).is_err());
 
         assert_eq!(fs::read_to_string(dir.join(MANIFEST)).unwrap(), TWO_ACTS);
@@ -1080,8 +1376,66 @@ mod tests {
         fs::remove_dir_all(&dir).unwrap();
     }
 
-    /// Act ids and titles, which is what the act commands are allowed to touch.
-    fn acts(project: &Project) -> Vec<(&str, &str)> {
+    /* ----------------------------------------------------------- projects */
+
+    #[test]
+    fn a_new_project_opens_like_any_other() {
+        let dir = project_with(TWO_ACTS);
+        let parent = dir.join("somewhere");
+        fs::create_dir_all(&parent).unwrap();
+
+        let made = create_project(path(&parent), "The county line".into()).unwrap();
+
+        // The strongest thing to assert: whatever create wrote, open accepts.
+        let p = open_project(made.clone()).unwrap();
+        assert!(made.ends_with("The county line.tramoire"));
+        assert_eq!(p.title, "The county line");
+        assert_eq!(shape(&p), [vec![vec!["sc-untitled-scene"]]]);
+
+        // Every level exists, or the binder would have nowhere to add anything.
+        assert_eq!(p.acts[0].title, "Act one");
+        assert_eq!(p.acts[0].chapters[0].title, "Chapter one");
+
+        let scene = &p.acts[0].chapters[0].scenes[0];
+        assert_eq!(
+            fs::read_to_string(Path::new(&made).join(&scene.file)).unwrap(),
+            ""
+        );
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_new_project_refuses_to_land_on_an_existing_folder() {
+        let dir = project_with(TWO_ACTS);
+        let parent = dir.join("somewhere");
+        fs::create_dir_all(parent.join("Taken.tramoire")).unwrap();
+
+        let err = create_project(path(&parent), "Taken".into()).unwrap_err();
+        assert!(err.contains("already"));
+
+        // Refusing has to mean untouched, not merged into.
+        assert!(!parent.join("Taken.tramoire").join(MANIFEST).exists());
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_new_project_refuses_an_unusable_title() {
+        let dir = project_with(TWO_ACTS);
+        let parent = dir.join("somewhere");
+        fs::create_dir_all(&parent).unwrap();
+
+        assert!(create_project(path(&parent), "   ".into()).is_err());
+        assert!(create_project(path(&parent), "???".into()).is_err());
+        assert!(create_project(path(&parent), "NUL".into()).is_err());
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /* --------------------------------------------------------------- acts */
+
+    fn act_titles(project: &Project) -> Vec<(&str, &str)> {
         project
             .acts
             .iter()
@@ -1096,7 +1450,7 @@ mod tests {
 
         let made = create_act(p.clone(), "Act three".into(), 99).unwrap();
         assert_eq!(
-            acts(&made),
+            act_titles(&made),
             [
                 ("act-1", "Act one"),
                 ("act-2", "Act two"),
@@ -1107,59 +1461,66 @@ mod tests {
         let renamed = rename_act(p.clone(), "act-3".into(), "The reckoning".into()).unwrap();
         assert_eq!(renamed.acts[2].title, "The reckoning");
 
-        // Moving an act carries its scenes with it.
+        // Moving an act carries its chapters, and their scenes, with it.
         let moved = move_act(p.clone(), "act-2".into(), 0).unwrap();
+        assert_eq!(order(&moved), ["sc-four", "sc-one", "sc-two", "sc-three"]);
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn deleting_an_act_can_keep_its_chapters() {
+        let dir = project_with(TWO_ACTS);
+
+        let p = delete_act(path(&dir), "act-2".into(), Contents::Move).unwrap();
+
+        // Act two's chapter joins the end of act one, whole.
+        assert_eq!(act_titles(&p), [("act-1", "Act one")]);
         assert_eq!(
-            shape(&moved),
-            [vec!["sc-three"], vec!["sc-one", "sc-two"], vec![]]
+            shape(&p),
+            [vec![
+                vec!["sc-one", "sc-two"],
+                vec!["sc-three"],
+                vec!["sc-four"]
+            ]]
         );
 
         fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
-    fn deleting_an_act_can_keep_its_scenes() {
-        let dir = project_with(TWO_ACTS);
-
-        let p = delete_act(path(&dir), "act-2".into(), Scenes::Move).unwrap();
-
-        // Act two's scene joins the end of act one, in reading order.
-        assert_eq!(acts(&p), [("act-1", "Act one")]);
-        assert_eq!(shape(&p), [vec!["sc-one", "sc-two", "sc-three"]]);
-
-        fs::remove_dir_all(&dir).unwrap();
-    }
-
-    #[test]
-    fn deleting_the_first_act_puts_its_scenes_in_front() {
+    fn deleting_the_first_act_puts_its_chapters_in_front() {
         let dir = project_with(TWO_ACTS);
 
         // There is no act above, so they go to the top of the one below —
         // they came before it in the manuscript.
-        let p = delete_act(path(&dir), "act-1".into(), Scenes::Move).unwrap();
+        let p = delete_act(path(&dir), "act-1".into(), Contents::Move).unwrap();
 
-        assert_eq!(shape(&p), [vec!["sc-one", "sc-two", "sc-three"]]);
+        assert_eq!(order(&p), ["sc-one", "sc-two", "sc-three", "sc-four"]);
+        assert_eq!(act_titles(&p), [("act-2", "Act two")]);
 
         fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
-    fn deleting_an_act_can_trash_its_scenes() {
+    fn deleting_an_act_can_trash_every_scene_inside_it() {
         let dir = project_with(TWO_ACTS);
         fs::create_dir_all(dir.join(SCENES)).unwrap();
         fs::write(dir.join("scenes/one.md"), "the first").unwrap();
         fs::write(dir.join("scenes/two.md"), "the second").unwrap();
+        fs::write(dir.join("scenes/three.md"), "the third").unwrap();
 
-        let p = delete_act(path(&dir), "act-1".into(), Scenes::Trash).unwrap();
+        // Two chapters deep — every scene under the act has to be found.
+        let p = delete_act(path(&dir), "act-1".into(), Contents::Trash).unwrap();
 
-        assert_eq!(shape(&p), [vec!["sc-three"]]);
+        assert_eq!(order(&p), ["sc-four"]);
         assert_eq!(
             fs::read_to_string(dir.join("trash/one.md")).unwrap(),
             "the first"
         );
         assert_eq!(
-            fs::read_to_string(dir.join("trash/two.md")).unwrap(),
-            "the second"
+            fs::read_to_string(dir.join("trash/three.md")).unwrap(),
+            "the third"
         );
 
         fs::remove_dir_all(&dir).unwrap();
@@ -1167,43 +1528,151 @@ mod tests {
 
     #[test]
     fn the_last_act_cannot_be_deleted() {
-        let dir = project_with(SAMPLE);
+        let dir = project();
 
-        // SAMPLE has one act. Removing it would leave a project with nowhere
-        // to put a scene.
-        let err = delete_act(path(&dir), "act-1".into(), Scenes::Move).unwrap_err();
+        let err = delete_act(path(&dir), "act-1".into(), Contents::Move).unwrap_err();
         assert!(err.contains("at least one act"));
         assert_eq!(fs::read_to_string(dir.join(MANIFEST)).unwrap(), SAMPLE);
 
         fs::remove_dir_all(&dir).unwrap();
     }
 
+    /* ----------------------------------------------------------- chapters */
+
     #[test]
-    fn a_new_act_never_reuses_an_id() {
+    fn chapters_can_be_added_renamed_and_moved() {
         let dir = project_with(TWO_ACTS);
         let p = path(&dir);
 
-        create_act(p.clone(), "Third".into(), 99).unwrap();
-        delete_act(p.clone(), "act-2".into(), Scenes::Move).unwrap();
-        let after = create_act(p.clone(), "Fourth".into(), 99).unwrap();
+        let made = create_chapter(p.clone(), "act-2".into(), "Chapter four".into(), 0).unwrap();
+        assert_eq!(made.acts[1].chapters[0].id, "ch-4");
+        assert_eq!(made.acts[1].chapters[0].title, "Chapter four");
 
-        // act-2 is free again and gets reused; what matters is that no two
-        // acts ever hold the same id at once.
-        let ids: Vec<&str> = after.acts.iter().map(|a| a.id.as_str()).collect();
-        let mut unique = ids.clone();
-        unique.sort_unstable();
-        unique.dedup();
-        assert_eq!(ids.len(), unique.len());
+        let renamed = rename_chapter(p.clone(), "ch-4".into(), "The drive".into()).unwrap();
+        assert_eq!(renamed.acts[1].chapters[0].title, "The drive");
+
+        // Into another act, carrying its scenes.
+        let moved = move_chapter(p.clone(), "ch-1".into(), "act-2".into(), 0).unwrap();
+        assert_eq!(
+            shape(&moved),
+            [
+                vec![vec!["sc-three"]],
+                vec![vec!["sc-one", "sc-two"], Vec::new(), vec!["sc-four"]]
+            ]
+        );
 
         fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
-    fn rename_refuses_a_newer_format() {
-        let dir = project_with(&SAMPLE.replace("\"formatVersion\": 1", "\"formatVersion\": 99"));
+    fn deleting_a_chapter_can_keep_its_scenes() {
+        let dir = project_with(TWO_ACTS);
 
-        assert!(rename_scene(path(&dir), "sc-one".into(), "Renamed".into()).is_err());
-        assert!(!dir.join(".project.json.bak").exists());
+        // ch-2 sits below ch-1 in the same act, so its scenes join the end of it.
+        let p = delete_chapter(path(&dir), "ch-2".into(), Contents::Move).unwrap();
+
+        assert_eq!(
+            shape(&p),
+            [
+                vec![vec!["sc-one", "sc-two", "sc-three"]],
+                vec![vec!["sc-four"]]
+            ]
+        );
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn deleting_a_chapter_crosses_into_the_previous_act() {
+        let dir = project_with(TWO_ACTS);
+
+        // ch-3 is the first chapter of act two, so the chapter above it is the
+        // last one of act one.
+        let p = delete_chapter(path(&dir), "ch-3".into(), Contents::Move).unwrap();
+
+        assert_eq!(
+            shape(&p),
+            [
+                vec![vec!["sc-one", "sc-two"], vec!["sc-three", "sc-four"]],
+                Vec::new()
+            ]
+        );
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn deleting_the_first_chapter_puts_its_scenes_in_front() {
+        let dir = project_with(TWO_ACTS);
+
+        // Nothing above ch-1 anywhere, so its scenes go to the top of ch-2.
+        let p = delete_chapter(path(&dir), "ch-1".into(), Contents::Move).unwrap();
+
+        assert_eq!(
+            shape(&p),
+            [
+                vec![vec!["sc-one", "sc-two", "sc-three"]],
+                vec![vec!["sc-four"]]
+            ]
+        );
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn deleting_a_chapter_can_trash_its_scenes() {
+        let dir = project_with(TWO_ACTS);
+        fs::create_dir_all(dir.join(SCENES)).unwrap();
+        fs::write(dir.join("scenes/one.md"), "the first").unwrap();
+        fs::write(dir.join("scenes/two.md"), "the second").unwrap();
+
+        let p = delete_chapter(path(&dir), "ch-1".into(), Contents::Trash).unwrap();
+
+        assert_eq!(order(&p), ["sc-three", "sc-four"]);
+        assert_eq!(
+            fs::read_to_string(dir.join("trash/one.md")).unwrap(),
+            "the first"
+        );
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn the_only_chapter_has_nowhere_to_move_its_scenes() {
+        let dir = project();
+
+        // SAMPLE has one chapter. Moving is impossible; trashing still works.
+        let err = delete_chapter(path(&dir), "ch-1".into(), Contents::Move).unwrap_err();
+        assert!(err.contains("nowhere to go"));
+        assert_eq!(fs::read_to_string(dir.join(MANIFEST)).unwrap(), SAMPLE);
+
+        let p = delete_chapter(path(&dir), "ch-1".into(), Contents::Trash).unwrap();
+        assert!(p.acts[0].chapters.is_empty());
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn ids_are_never_shared_by_two_things_at_once() {
+        let dir = project_with(TWO_ACTS);
+        let p = path(&dir);
+
+        create_act(p.clone(), "Third".into(), 99).unwrap();
+        delete_act(p.clone(), "act-2".into(), Contents::Move).unwrap();
+        create_act(p.clone(), "Fourth".into(), 99).unwrap();
+
+        create_chapter(p.clone(), "act-1".into(), "A".into(), 99).unwrap();
+        delete_chapter(p.clone(), "ch-2".into(), Contents::Move).unwrap();
+        let after = create_chapter(p.clone(), "act-1".into(), "B".into(), 99).unwrap();
+
+        // Freed ids get reused; what matters is that nothing holds one twice.
+        let mut ids: Vec<&str> = after.acts.iter().map(|a| a.id.as_str()).collect();
+        ids.extend(chapters(&after).map(|c| c.id.as_str()));
+
+        let mut unique = ids.clone();
+        unique.sort_unstable();
+        unique.dedup();
+        assert_eq!(ids.len(), unique.len());
 
         fs::remove_dir_all(&dir).unwrap();
     }

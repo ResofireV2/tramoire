@@ -1,34 +1,46 @@
 {
-  "formatVersion": 1,
+  "formatVersion": 2,
   "title": "The county line",
   "acts": [
     {
       "id": "act-1",
       "title": "Act one",
-      "scenes": [
+      "chapters": [
         {
-          "id": "sc-six-hours-out",
-          "title": "Six hours out",
-          "file": "scenes/six-hours-out.md",
-          "status": "Chapter 9 · revision 3"
-        },
-        {
-          "id": "sc-the-sundowner",
-          "title": "The Sundowner",
-          "file": "scenes/the-sundowner.md",
-          "status": "Chapter 10 · revision 1"
+          "id": "ch-1",
+          "title": "The drive out",
+          "scenes": [
+            {
+              "id": "sc-six-hours-out",
+              "title": "Six hours out",
+              "file": "scenes/six-hours-out.md",
+              "status": "revision 3"
+            },
+            {
+              "id": "sc-the-sundowner",
+              "title": "The Sundowner",
+              "file": "scenes/the-sundowner.md",
+              "status": "revision 1"
+            }
+          ]
         }
       ]
     },
     {
       "id": "act-2",
       "title": "Act two",
-      "scenes": [
+      "chapters": [
         {
-          "id": "sc-what-nadia-knew",
-          "title": "What Nadia knew",
-          "file": "scenes/what-nadia-knew.md",
-          "status": "outline only"
+          "id": "ch-2",
+          "title": "What the motel knew",
+          "scenes": [
+            {
+              "id": "sc-what-nadia-knew",
+              "title": "What Nadia knew",
+              "file": "scenes/what-nadia-knew.md",
+              "status": "outline only"
+            }
+          ]
         }
       ]
     }

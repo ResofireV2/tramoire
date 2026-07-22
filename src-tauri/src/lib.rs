@@ -20,6 +20,10 @@ pub fn run() {
             commands::rename_act,
             commands::move_act,
             commands::delete_act,
+            commands::create_chapter,
+            commands::rename_chapter,
+            commands::move_chapter,
+            commands::delete_chapter,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
