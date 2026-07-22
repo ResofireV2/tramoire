@@ -1,7 +1,10 @@
 mod commands;
+mod entities;
+mod frontmatter;
 mod model;
 mod naming;
 mod paths;
+mod settings;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -24,6 +27,12 @@ pub fn run() {
             commands::rename_chapter,
             commands::move_chapter,
             commands::delete_chapter,
+            entities::list_entities,
+            entities::create_entity,
+            entities::write_entity,
+            entities::delete_entity,
+            settings::load_settings,
+            settings::save_settings,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

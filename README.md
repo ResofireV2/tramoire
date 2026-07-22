@@ -89,7 +89,13 @@ The sample project is committed to this repository on purpose: editing it makes
 12. Drag an act header while watching the indicator. It only ever offers gaps
     between acts — the chapter and scene rows underneath stay inert, because
     what is being dragged decides which drop zones are live.
-13. `git checkout sample/ && git clean -fd sample/` to reset — the checkout
+13. Pick **Characters** from the rail on the far left and press **+**. A record
+    appears with a name, a type and an aliases field, and `entities/` now holds
+    one markdown file describing it. Change its type to anything you like —
+    `magic system`, say — and a new icon for that type appears in the rail,
+    because the rail is built from the words in the folder rather than a list
+    in the code.
+14. `git checkout sample/ && git clean -fd sample/` to reset — the checkout
     restores what was tracked, the clean removes what was created or trashed.
 
 ## Scripts
@@ -115,7 +121,8 @@ src/
     editor.ts       schema, smart typography, paste handling
     theme.ts        the two theme axes
     binder.ts       where a scene or chapter lands when it moves
-    recent.ts       which projects were open lately
+    entities.ts     grouping entities by what they are
+    settings.ts     what is remembered between runs
   components/       presentational only, no filesystem knowledge
   styles/
     tokens.css      the only file allowed to contain a hex value
@@ -123,10 +130,13 @@ src/
     editor.css      the manuscript column
 
 src-tauri/src/
-  commands.rs       every command the frontend can call
+  commands.rs       every manuscript command the frontend can call
+  entities.rs       every entity command, and what an entity is
+  frontmatter.rs    the small format entity files are written in
   model.rs          the shape of project.json, and the shapes it used to have
   naming.rs         titles into filenames and folder names
-  paths.rs          path containment, atomic writes, checkpoints
+  paths.rs          path containment, atomic writes, checkpoints, trash
+  settings.rs       what the application remembers between runs
 
 sample/             a project to open, so the app is runnable on clone
 ```
@@ -138,9 +148,37 @@ MyNovel.tramoire/
   project.json      manifest: ordering tree, metadata
   scenes/
     six-hours-out.md
-  trash/            deleted scenes, still readable
+  entities/         characters, locations, items, anything named
+    nadia-okonkwo.md
+  trash/            deleted scenes and entities, still readable
     an-old-scene.md
 ```
+
+An entity is one markdown file that describes itself:
+
+```markdown
+---
+id: en-nadia-okonkwo
+name: Nadia Okonkwo
+type: character
+aliases:
+  - Nadia
+---
+
+Runs the desk at the Sundowner.
+```
+
+There is no index. `entities/` is read to find out what is in it, so a file
+dropped into the folder by hand simply appears, and the folder still explains
+itself without this application. A character and a location are the same record
+with a different `type`, which is what makes adding *magic system* a matter of
+typing the word rather than building anything.
+
+The frontmatter is a fixed subset of YAML — `key: value` lines and `- item`
+lists, no quoting, escapes or nesting — parsed by `frontmatter.rs` rather than a
+dependency. Keys it does not recognise are kept and written back untouched, so a
+newer version's fields survive being edited by an older one. A file with no
+frontmatter at all is still readable: it is simply all body.
 
 Deleting a scene takes its entry out of the manifest and moves the file to
 `trash/`. Nothing in the app empties that folder — recovery is moving the file
@@ -220,6 +258,10 @@ because it never gets its own opinion about one.
 **Display settings never touch the document.** Theme, font size, line height
 and measure are CSS on a container and are stored with the application, never in
 the project folder — a shared project should not carry someone else's font size.
+They live in a `settings.json` this application writes into the OS config
+directory, deliberately not in the webview's `localStorage`: that is storage the
+webview owns, and on Linux it is not reliably kept between runs for a Tauri
+origin, which turns "reopen what I had open" into a coin toss.
 
 **One hex value, one place.** `src/styles/tokens.css`. One grep proves it:
 
@@ -237,16 +279,16 @@ new one, never half of one.
 
 Each is additive. None require changing what is already here.
 
-1. **Entities** — `entities/*.md` with frontmatter, one table with a `type`
-   column, one link table. Characters, locations, items and magic systems are
-   the same noun, which is what makes each new one nearly free.
-2. **The icon rail** — a column down the left switching between the manuscript,
-   the entities and a notes tree. It ships with entities rather than before
-   them: a rail with one working icon and eight dead ones advertises rooms that
-   do not exist.
-3. **Decorations** — the ProseMirror plugin that underlines entity names.
-   Decorations, not marks: nothing is written into the document, so renaming an
-   entity updates every highlight with no migration.
+1. **Decorations** — the ProseMirror plugin that underlines entity names and
+   aliases in the manuscript. Decorations, not marks: nothing is written into
+   the document, so renaming an entity updates every highlight with no
+   migration, and which scenes something appears in becomes derivable rather
+   than a list to keep in sync by hand.
+2. **Links between entities** — held back until decorations exist, because some
+   of what a link table would store turns out to be derivable instead.
+3. **A notes tree** — `notes/` as a folder of free-form markdown for research,
+   world and history, reached from the rail like everything else. Documents
+   rather than records, which is the one thing entities are not.
 4. **Snapshots** — copy a scene into `snapshots/{sceneId}/{timestamp}.md`
    before a rewrite. Files, not a database, so nothing in the project folder is
    a binary blob a sync client can corrupt.
@@ -268,9 +310,18 @@ Each is additive. None require changing what is already here.
   chapter holding one scene for the same reason.
 - The recent projects list is remembered, but not which scene was open in one.
   Reopening a project lands on the binder rather than where you left off.
+- Which fields each type of entity is asked for is a table in `lib/fields.ts`,
+  not something the project can change. The files stay valid whatever it says —
+  a key added by hand still shows, and a blank field is never written — so
+  moving those templates into the project folder later is additive.
 - Nothing empties `trash/`. That is deliberate, but it does mean a project
   folder only grows.
-- No entities, no snapshots, no images, no export. On purpose.
+- Entity names are not highlighted in the manuscript yet, and nothing links one
+  entity to another. Both wait on decorations, which is the next thing.
+- Entity notes are a plain textarea of markdown rather than the rich editor.
+  The rich editor exists to make prose decisions the exporter honours, which a
+  note about a character does not need.
+- No snapshots, no images, no export. On purpose.
 
 ## Distribution
 

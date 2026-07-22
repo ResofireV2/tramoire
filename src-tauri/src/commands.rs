@@ -13,12 +13,12 @@ use std::path::{Path, PathBuf};
 use serde::Deserialize;
 
 use crate::model::{v1, Act, Chapter, Created, Project, SceneMeta, FORMAT_VERSION};
-use crate::naming::{folder_name, slugify};
-use crate::paths::{checkpoint, resolve, write_atomic};
+use crate::naming::{clean_title, folder_name, is_derived, slugify};
+use crate::paths::{checkpoint, resolve, trash, write_atomic};
 
 const MANIFEST: &str = "project.json";
 const SCENES: &str = "scenes";
-const TRASH: &str = "trash";
+
 const EXTENSION: &str = "tramoire";
 
 #[tauri::command]
@@ -140,13 +140,13 @@ pub fn rename_scene(
     // Worked out before the manifest is touched, so `unused_stem` compares
     // against the project as it actually stands on disk. Punctuation-only edits
     // produce the same slug and so move nothing.
-    let new_file = if is_app_named(&old_file, &old_title) && slugify(&title) != slugify(&old_title)
-    {
-        let stem = unused_stem(&project_path, &project, &slugify(&title))?;
-        Some(format!("{SCENES}/{stem}.md"))
-    } else {
-        None
-    };
+    let new_file =
+        if is_derived(&old_file, SCENES, &old_title) && slugify(&title) != slugify(&old_title) {
+            let stem = unused_stem(&project_path, &project, &slugify(&title))?;
+            Some(format!("{SCENES}/{stem}.md"))
+        } else {
+            None
+        };
 
     project.acts[act].chapters[chapter].scenes[index].title = title;
 
@@ -283,30 +283,6 @@ pub fn delete_scene(project_path: String, scene_id: String) -> Result<Project, S
     trash(&project_path, &scene.file)?;
 
     Ok(project)
-}
-
-/// Move a project file into `trash/`, without overwriting anything already
-/// there. A file that has already gone is not an error — there is simply
-/// nothing left to move.
-fn trash(project_path: &str, file: &str) -> Result<(), String> {
-    let from = resolve(project_path, file)?;
-    if !from.exists() {
-        return Ok(());
-    }
-
-    let name = Path::new(file)
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("scene.md");
-
-    let to = resolve(project_path, &unused_trash_file(project_path, name)?)?;
-
-    if let Some(parent) = to.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|e| format!("couldn't create {}: {e}", parent.display()))?;
-    }
-
-    fs::rename(&from, &to).map_err(|e| format!("couldn't move {} to {TRASH}: {e}", from.display()))
 }
 
 /* ----------------------------------------------------------------- acts */
@@ -655,29 +631,6 @@ fn locate(project: &Project, scene_id: &str) -> Result<(usize, usize, usize), St
         .ok_or_else(|| format!("no scene {scene_id} in this project"))
 }
 
-/// Whether a file name is one this application derived from a title, rather
-/// than one someone chose.
-///
-/// True for the slug of the title, and for the numbered forms `unused_stem`
-/// hands out when that slug is taken. Anything else — a different folder, a
-/// different extension, a name of their own — is theirs.
-fn is_app_named(file: &str, title: &str) -> bool {
-    let Some(stem) = file
-        .strip_prefix(&format!("{SCENES}/"))
-        .and_then(|name| name.strip_suffix(".md"))
-    else {
-        return false;
-    };
-
-    let base = slugify(title);
-
-    stem == base
-        || stem
-            .strip_prefix(&base)
-            .and_then(|rest| rest.strip_prefix('-'))
-            .is_some_and(|n| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()))
-}
-
 /// A filename stem that no scene is using and no file on disk has taken.
 ///
 /// Both are checked: an id can outlive its file, and an orphaned file can
@@ -705,29 +658,6 @@ fn unused_stem(project_path: &str, project: &Project, base: &str) -> Result<Stri
 
     Err(format!("too many scenes named like {base}"))
 }
-
-fn unused_trash_file(project_path: &str, name: &str) -> Result<String, String> {
-    let (stem, extension) = match name.rsplit_once('.') {
-        Some((stem, extension)) => (stem, format!(".{extension}")),
-        None => (name, String::new()),
-    };
-
-    for n in 1..1000 {
-        let candidate = if n == 1 {
-            format!("{TRASH}/{stem}{extension}")
-        } else {
-            format!("{TRASH}/{stem}-{n}{extension}")
-        };
-
-        if !resolve(project_path, &candidate)?.exists() {
-            return Ok(candidate);
-        }
-    }
-
-    Err(format!("{TRASH} already holds too many copies of {name}"))
-}
-
-/* ------------------------------------------------------------- manifest */
 
 fn manifest_path(project_path: &str) -> PathBuf {
     Path::new(project_path).join(MANIFEST)
@@ -782,25 +712,10 @@ fn write_manifest(project_path: &str, project: &Project) -> Result<(), String> {
     write_atomic(&manifest, &json)
 }
 
-/// Titles are shown in the binder and nowhere else — they are not filenames, so
-/// the only rules are that one exists and that it cannot smuggle in line breaks.
-fn clean_title(title: &str) -> Result<String, String> {
-    let title = title.trim();
-
-    if title.is_empty() {
-        return Err("a scene needs a title".into());
-    }
-
-    if title.contains(['\n', '\r']) {
-        return Err("a title cannot span lines".into());
-    }
-
-    Ok(title.to_string())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::paths::TRASH;
     use std::sync::atomic::{AtomicU32, Ordering};
 
     const SAMPLE: &str = r#"{

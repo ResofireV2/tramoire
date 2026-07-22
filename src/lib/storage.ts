@@ -13,6 +13,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 
+import type { Settings } from "./settings";
+
 /** Mirrors `src-tauri/src/model.rs`. Change both together. */
 export type SceneMeta = {
   id: string;
@@ -211,6 +213,79 @@ export function deleteChapter(
   contents: Contents
 ): Promise<Project> {
   return invoke("delete_chapter", { projectPath, chapterId, contents });
+}
+
+/* -------------------------------------------------------------- settings */
+
+/**
+ * What the application remembers between runs, from the OS config directory.
+ *
+ * Never fails: a missing or unreadable file is a set of defaults, because
+ * nothing in it is worth refusing to start over.
+ */
+export function loadSettings(): Promise<unknown> {
+  return invoke("load_settings");
+}
+
+export function saveSettings(settings: Settings): Promise<void> {
+  return invoke("save_settings", { settings });
+}
+
+/* -------------------------------------------------------------- entities */
+
+/** Mirrors `Entity` in `src-tauri/src/entities.rs`. */
+export type Entity = {
+  /** Stable across renames, unlike the file. */
+  id: string;
+  name: string;
+  type: string;
+  aliases: string[];
+  /** Every other frontmatter key, in the order it should be written. */
+  fields: Pair[];
+  /** The `## Heading` sections of the body, in order. */
+  sections: Pair[];
+  /** Whatever comes before the first heading. */
+  notes: string;
+  file: string;
+};
+
+/**
+ * A key and its value. An ordered list rather than an object, because the
+ * order is ours to decide and an object would throw it away.
+ */
+export type Pair = {
+  key: string;
+  value: string;
+};
+
+/**
+ * Everything in `entities/`, by name.
+ *
+ * Read from the folder rather than an index, so a file dropped in by hand
+ * appears and the folder still explains itself without this application.
+ */
+export function listEntities(projectPath: string): Promise<Entity[]> {
+  return invoke("list_entities", { projectPath });
+}
+
+export function createEntity(projectPath: string, name: string, type: string): Promise<Entity> {
+  // `kind` rather than `type` over the wire: `type` is a Rust keyword, so the
+  // command names its parameter `kind`, and an argument name that does not
+  // match is a failure at the boundary rather than a compile error.
+  return invoke("create_entity", { projectPath, name, kind: type });
+}
+
+/**
+ * Save an entity and resolve to it as it now stands — its `file` may have moved
+ * to follow a new name, so replace the one in hand with what comes back.
+ */
+export function writeEntity(projectPath: string, entity: Entity): Promise<Entity> {
+  return invoke("write_entity", { projectPath, entity });
+}
+
+/** Move an entity's file to `trash/`. */
+export function deleteEntity(projectPath: string, file: string): Promise<void> {
+  return invoke("delete_entity", { projectPath, file });
 }
 
 /** Flatten the tree for anything that needs chapters in reading order. */

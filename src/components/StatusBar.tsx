@@ -21,8 +21,10 @@ export function StatusBar({ file, words, saveState, saveError }: Props) {
         {file ?? ""}
       </span>
       <span>{file ? `${words.toLocaleString()} words in this scene` : ""}</span>
+      {/* The message itself, not just that there was one. Hiding it in a
+          tooltip means a failure at the Rust boundary looks like a mystery. */}
       <span className={saveState === "error" ? "save-error" : undefined} title={saveError ?? undefined}>
-        {LABEL[saveState]}
+        {saveState === "error" && saveError ? saveError : LABEL[saveState]}
       </span>
     </footer>
   );

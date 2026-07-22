@@ -6,6 +6,8 @@
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
+pub const TRASH: &str = "trash";
+
 /// Join a project-relative path onto the project root.
 ///
 /// Rejects absolute paths, `..`, drive prefixes, and root components — so a
@@ -89,6 +91,55 @@ fn split(path: &Path) -> Result<(&Path, &str), String> {
         .ok_or_else(|| format!("bad filename: {}", path.display()))?;
 
     Ok((parent, name))
+}
+
+/// Move a project file into `trash/`, without overwriting anything already
+/// there.
+///
+/// Deleting prose outright is not something a writing application should
+/// offer, so anything it removes stays readable in the project folder and
+/// recovery is moving the file back by hand. A file that has already gone is
+/// not an error — there is simply nothing left to move.
+pub fn trash(project_path: &str, file: &str) -> Result<(), String> {
+    let from = resolve(project_path, file)?;
+    if !from.exists() {
+        return Ok(());
+    }
+
+    let name = Path::new(file)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("untitled.md");
+
+    let to = resolve(project_path, &unused_trash_file(project_path, name)?)?;
+
+    if let Some(parent) = to.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|e| format!("couldn't create {}: {e}", parent.display()))?;
+    }
+
+    fs::rename(&from, &to).map_err(|e| format!("couldn't move {} to {TRASH}: {e}", from.display()))
+}
+
+fn unused_trash_file(project_path: &str, name: &str) -> Result<String, String> {
+    let (stem, extension) = match name.rsplit_once('.') {
+        Some((stem, extension)) => (stem, format!(".{extension}")),
+        None => (name, String::new()),
+    };
+
+    for n in 1..1000 {
+        let candidate = if n == 1 {
+            format!("{TRASH}/{stem}{extension}")
+        } else {
+            format!("{TRASH}/{stem}-{n}{extension}")
+        };
+
+        if !resolve(project_path, &candidate)?.exists() {
+            return Ok(candidate);
+        }
+    }
+
+    Err(format!("{TRASH} already holds too many copies of {name}"))
 }
 
 #[cfg(test)]

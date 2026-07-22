@@ -76,6 +76,131 @@ button {
 
 .main { display: flex; flex: 1; min-height: 0; }
 
+/* ---------------------------------------------------------------- rail */
+
+.rail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  width: 52px;
+  flex-shrink: 0;
+  padding: 14px 0;
+  border-right: 1px solid var(--chrome-border);
+  background: var(--chrome-panel);
+  overflow-y: auto;
+}
+
+.rail-item {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 34px;
+  border-radius: 9px;
+  color: var(--chrome-text-3);
+}
+.rail-item:hover { background: var(--chrome-raised); color: var(--chrome-text-2); }
+.rail-item[aria-current="true"] {
+  background: var(--chrome-accent-bg);
+  color: var(--chrome-accent);
+}
+
+.rail-rule {
+  width: 20px;
+  height: 1px;
+  margin: 7px 0;
+  background: var(--chrome-border);
+}
+
+/* -------------------------------------------------------------- record */
+
+.record { padding-top: 8px; }
+
+/* Big enough to be the record's title, but visibly a box you can type in —
+   a borderless one reads as a heading, and the name ends up in whatever field
+   does look editable. */
+.record-name {
+  display: block;
+  width: 100%;
+  padding: 5px 10px;
+  margin-left: -10px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: none;
+  color: var(--chrome-text);
+  font-family: var(--sans);
+  font-size: 27px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.record-name:hover { border-color: var(--chrome-border); }
+.record-name:focus {
+  outline: none;
+  border-color: var(--chrome-accent);
+  background: var(--chrome-panel);
+}
+.record-name::placeholder { color: var(--chrome-text-3); font-weight: 500; }
+
+.record-aliases { margin-top: 14px; }
+
+.record-fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  margin-bottom: 8px;
+}
+.record-fields .field { flex: 1 1 150px; }
+
+/* A heading and the prose under it, which is exactly what it becomes on disk. */
+.record-section {
+  display: block;
+  margin-top: 26px;
+  padding-top: 22px;
+  border-top: 1px solid var(--chrome-border);
+}
+.record-section > span {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 13px;
+  color: var(--chrome-text-3);
+}
+.record-section textarea {
+  display: block;
+  width: 100%;
+  min-height: 5.6em;
+  padding: 0;
+  border: none;
+  background: none;
+  resize: vertical;
+  color: var(--chrome-text-2);
+  font-family: var(--sans);
+  font-size: 15px;
+  line-height: 1.65;
+}
+.record-section textarea:focus { outline: none; }
+
+.record-type {
+  margin: 34px 0 8px;
+  font-size: 13px;
+}
+.record-type button {
+  padding: 5px 9px;
+  margin-left: -9px;
+  border-radius: 7px;
+  color: var(--chrome-text-3);
+}
+.record-type button:hover { background: var(--chrome-panel); color: var(--chrome-text-2); }
+.record-type input {
+  padding: 5px 9px;
+  border: 1px solid var(--chrome-accent);
+  border-radius: 7px;
+  background: var(--chrome-raised);
+  color: var(--chrome-text);
+  font-family: var(--sans);
+  font-size: 13px;
+}
+.record-type input:focus { outline: none; }
+
 /* -------------------------------------------------------------- binder */
 
 .binder {
@@ -461,7 +586,13 @@ button {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.status .save-error { color: var(--chrome-accent); }
+.status .save-error {
+  color: var(--chrome-accent);
+  max-width: 46ch;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 
 /* --------------------------------------------------------- breakpoints */
 

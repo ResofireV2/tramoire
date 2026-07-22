@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 
-import type { Recent } from "../lib/recent";
+import type { Recent } from "../lib/settings";
 
 type Props = {
   recent: Recent[];

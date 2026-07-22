@@ -69,6 +69,44 @@ pub fn folder_name(title: &str) -> Option<String> {
     Some(name)
 }
 
+/// Whether a file name is one this application derived from a title, rather
+/// than one someone chose.
+///
+/// True for the slug of the title, and for the numbered forms handed out when
+/// that slug is taken. Anything else — a different folder, a different
+/// extension, a name of their own — is theirs, and the app never moves it.
+pub fn is_derived(file: &str, folder: &str, title: &str) -> bool {
+    let Some(stem) = file
+        .strip_prefix(&format!("{folder}/"))
+        .and_then(|name| name.strip_suffix(".md"))
+    else {
+        return false;
+    };
+
+    let base = slugify(title);
+
+    stem == base
+        || stem
+            .strip_prefix(&base)
+            .and_then(|rest| rest.strip_prefix('-'))
+            .is_some_and(|n| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()))
+}
+
+/// A title that can be shown and stored: present, and on one line.
+pub fn clean_title(title: &str) -> Result<String, String> {
+    let title = title.trim();
+
+    if title.is_empty() {
+        return Err("a title cannot be empty".into());
+    }
+
+    if title.contains(['\n', '\r']) {
+        return Err("a title cannot span lines".into());
+    }
+
+    Ok(title.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

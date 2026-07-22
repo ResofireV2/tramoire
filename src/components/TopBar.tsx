@@ -1,5 +1,5 @@
 import { Menu } from "./Menu";
-import type { Recent } from "../lib/recent";
+import type { Recent } from "../lib/settings";
 import type { Chrome, EditorTheme, Theme } from "../lib/theme";
 
 type Props = {
