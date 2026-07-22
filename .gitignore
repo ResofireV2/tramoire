@@ -13,6 +13,11 @@ src-tauri/gen/schemas/
 # is by renaming one back by hand; they are never part of a commit.
 .project.json.bak
 
+# Claude Code local state — machine-specific tool permissions and the temp
+# files it writes beside them. A shared .claude/settings.json is still fine.
+.claude/settings.local.json
+.claude/*.tmp.*
+
 # Editors and OS
 .vscode/
 .idea/
